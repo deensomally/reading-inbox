@@ -1019,18 +1019,14 @@ textarea {
   }
 }
 @media (max-height: 30rem) {
-  .app {
-    height: auto;
-    min-height: 100dvh;
+  .list-heading {
+    padding-block: 0.6rem;
   }
-  .list-scroll,
-  .paper-scroll {
-    overflow: visible;
+  .list-heading .section-label {
+    display: none;
   }
-  .layout,
-  .collection-panel,
-  .desk {
-    min-height: auto;
+  .desk-bar {
+    min-height: 2.8rem;
   }
 }
 @media (forced-colors: active) {

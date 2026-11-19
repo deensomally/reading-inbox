@@ -31,6 +31,8 @@ npm run build
 npm run preview -- --port 4173
 ```
 
+To try a prebuilt copy, download **reading-inbox-preview** from the PR’s successful GitHub Actions run and extract the ZIP. With Python 3 installed, open a terminal in the extracted folder and run `py -m http.server 4173 --bind 127.0.0.1` on Windows, or `python3 -m http.server 4173 --bind 127.0.0.1` on macOS or Linux. Open `http://localhost:4173`.
+
 On **Windows**, open `http://localhost:4173` in Edge or Chrome. Use the browser’s install-app command. After the first online load, the service worker caches the shell, bundled fonts, article assets and local mock inputs. Reload once before disconnecting. The installed app can reopen offline and serve previously unrequested fixture depths.
 
 On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-connected test phone with Android platform tools and USB debugging enabled, run `adb reverse tcp:4173 tcp:4173` on the computer and open `http://localhost:4173` on the phone. Chrome’s menu offers installation on supported devices. An ordinary HTTP LAN address lacks the secure context required for the PWA and Web Crypto. Each browser profile keeps its own reading state.

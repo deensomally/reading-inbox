@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { test, expect } from "@playwright/test";
 test.describe("local provider faults", () => {
   test.use({ serviceWorkers: "block" });
@@ -113,27 +114,94 @@ test("complete illustrated original exposes its figure and caption offline", asy
       .evaluate((e) => (e as HTMLImageElement).naturalWidth),
   ).toBe(800);
 });
-// Report the actual engine and platform for device review and hosted Windows runs.
-test("browser accepts the PWA manifest and installability checks", async ({
-  page,
-  context,
-  browser,
-  browserName,
+
+test("regular browser profile accepts the PWA and relaunches the installed reader offline", async ({
+  playwright,
+  viewport,
+  isMobile,
+  hasTouch,
+  baseURL,
 }, testInfo) => {
-  await page.goto("/");
-  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
-  const cdp = await context.newCDPSession(page);
-  const { errors } = await cdp.send("Page.getAppManifest");
-  expect(errors).toEqual([]);
-  const { installabilityErrors } = await cdp.send(
-    "Page.getInstallabilityErrors",
-  );
-  expect(installabilityErrors).toEqual([]);
-  console.log(
-    testInfo.project.name,
-    browserName,
-    browser.version(),
-    process.platform,
-    process.env.ImageVersion ?? "",
-  );
+  test.slow();
+  // Installation requires a regular profile. An empty directory argument creates
+  // an isolated temporary profile that Playwright removes on close.
+  const context = await playwright.chromium.launchPersistentContext("", {
+    channel:
+      testInfo.project.name === "desktop"
+        ? (process.env.READER_BROWSER_CHANNEL ?? "chromium")
+        : "chromium",
+    viewport,
+    isMobile,
+    hasTouch,
+    baseURL,
+    headless: process.platform !== "win32",
+  });
+  try {
+    const page = context.pages()[0];
+    await page.goto("/");
+    await page.locator("#row-night-train").waitFor();
+    await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    const cdp = await context.newCDPSession(page);
+    const { errors, manifest } = await cdp.send("Page.getAppManifest");
+    expect(errors).toEqual([]);
+    expect(
+      (await cdp.send("Page.getInstallabilityErrors")).installabilityErrors,
+    ).toEqual([]);
+    const manifestId = new URL("/", baseURL).href;
+    expect(manifest?.id).toBe(manifestId);
+    console.log(
+      testInfo.project.name,
+      process.env.READER_BROWSER_CHANNEL ?? "chromium",
+      (await cdp.send("Browser.getVersion")).product,
+      process.platform,
+      process.env.ImageVersion ?? "",
+    );
+    await cdp.send("PWA.install", {
+      manifestId,
+      installUrlOrBundleUrl: manifestId,
+    });
+    try {
+      await context.setOffline(true);
+      const opened = context.waitForEvent("page");
+      await cdp.send("PWA.launch", { manifestId });
+      const app = await opened;
+      await expect(app.locator("#row-night-train")).toBeVisible();
+      await app.locator("#row-night-train").click();
+      await expect(app.locator(".summary-text")).toContainText("night train");
+      await expect(app.getByText("Offline", { exact: true })).toBeVisible();
+      if (process.platform === "win32") {
+        await app
+          .getByRole("button", { name: "Copy summary", exact: true })
+          .click();
+        await expect(app.getByRole("status")).toHaveText("Summary copied");
+        // Paste into a native Windows text box owned by another process.
+        const pasted = execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-STA",
+            "-Command",
+            [
+              "Add-Type -AssemblyName System.Windows.Forms",
+              "$field = New-Object System.Windows.Forms.TextBox",
+              "$field.Multiline = $true",
+              "$field.Paste()",
+              "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
+              "[Console]::Write($field.Text)",
+              "$field.Dispose()",
+            ].join("; "),
+          ],
+          { encoding: "utf8", timeout: 15000 },
+        );
+        expect(pasted.replace(/^\uFEFF/, "")).toBe(
+          await app.locator(".summary-text p").innerText(),
+        );
+      }
+    } finally {
+      await cdp.send("PWA.uninstall", { manifestId });
+    }
+  } finally {
+    await context.close();
+  }
 });
