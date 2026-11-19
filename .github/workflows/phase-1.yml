@@ -40,3 +40,28 @@ jobs:
           name: reading-inbox-preview
           path: dist
           include-hidden-files: true
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Allow the runner to use its emulator accelerator
+        run: sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+      - name: Start the production demo
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 --strictPort > /tmp/reading-preview.log 2>&1 &
+          curl --retry 15 --retry-delay 1 --retry-connrefused --fail http://127.0.0.1:4173/
+      - name: Test Chrome on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: node tests/android.ts
