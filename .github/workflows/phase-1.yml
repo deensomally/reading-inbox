@@ -1,0 +1,42 @@
+name: Phase 1 reader checks
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  reader:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            project: phone
+            channel: chromium
+          - os: windows-latest
+            project: desktop
+            channel: msedge
+          - os: windows-latest
+            project: desktop
+            channel: chrome
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      READER_BROWSER_CHANNEL: ${{ matrix.channel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run test:unit
+      - if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e -- --project=${{ matrix.project }} --workers=1
+      - if: matrix.channel == 'chrome'
+        uses: actions/upload-artifact@v4
+        with:
+          name: reading-inbox-preview
+          path: dist
+          include-hidden-files: true
