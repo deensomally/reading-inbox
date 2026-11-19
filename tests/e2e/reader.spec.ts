@@ -200,6 +200,7 @@ test("coverage boundaries, clipboard denial and missing text", async ({
 });
 test("Back restores list position and focus, reopen restores original scroll", async ({
   page,
+  isMobile,
 }) => {
   await page.goto("/");
   const list = page.locator(".list-scroll");
@@ -227,6 +228,16 @@ test("Back restores list position and focus, reopen restores original scroll", a
   await page.locator("#row-night-train").click();
   await expect(page).toHaveURL(/original$/);
   await expect.poll(() => pane.evaluate((e) => e.scrollTop)).toBe(510);
+  if (!isMobile) {
+    await page.locator("#row-index").click();
+    await expect(page.locator(".article-heading h1")).toHaveText(
+      "An index for the words we inherit",
+    );
+    const latestListTop = await list.evaluate((e) => e.scrollTop);
+    await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(page.locator("#row-index")).toBeFocused();
+    expect(await list.evaluate((e) => e.scrollTop)).toBe(latestListTop);
+  }
 });
 test("200% text, visible focus, source order and navigation at narrow widths", async ({
   page,

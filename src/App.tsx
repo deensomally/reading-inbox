@@ -144,7 +144,7 @@ export default function App() {
     noticeTimer.current = window.setTimeout(() => setMessage(""), 2700);
   }
   function open(articleId: string, s: Stage) {
-    if (!id) {
+    if (articleId !== id) {
       origin.current = articleId;
       if (list.current)
         sessionStorage.setItem(

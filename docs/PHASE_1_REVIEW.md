@@ -29,7 +29,17 @@ On 19 November 2026 the real post and its publisher-provided discussion URL both
 
 ## Device checks
 
-Local verification used Linux with Playwright Chromium 159.0.8154.6, a 1366 × 830 desktop viewport and a touch-enabled 412 × 839 Pixel 7 viewport. The shared browser also opened the running demo. Automated accessibility checks cover semantics, labels, contrast and document order. Physical Android and Windows assistive-technology sessions were unavailable in the workspace.
+On 19 November 2026, the clean install, formatter, linter, typecheck, eight unit tests and production build passed. All 26 local Playwright cases passed with Chromium 159.0.8154.6 on Linux, using a 1366 × 830 desktop viewport and a touch-enabled 412 × 839 Pixel 7 viewport.
+
+| Platform exercised                                                         | Observed result                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows Server 2025, Microsoft Edge 156.0.4314.58 and Chrome 157.0.8103.79 | All 13 desktop cases passed in each browser. Both installed the PWA in a temporary regular profile, relaunched it offline, generated a local summary and pasted it into a native Windows Forms text field in another process. |
+| Android 15 emulator, bundled Chrome 124                                    | Tapped through all four stages, expanded the original’s discussion, returned to the list with reading state intact and reopened the original offline. The emulator uses a loopback connection to the production build.        |
+| Shared Linux desktop                                                       | Opened the running app, selected Essence, and inspected the accessible headline, attribution, summary label and controls.                                                                                                     |
+
+[Windows browser runs](https://github.com/deensomally/reading-inbox/actions/runs/44551753305) · [Android emulator run](https://github.com/deensomally/reading-inbox/actions/runs/44552022542)
+
+The physical-device checks below remain open. In particular, the emulator’s bundled Chrome is older than current Android Chrome.
 
 For a device review, record the OS and browser versions alongside each result.
 

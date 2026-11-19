@@ -60,4 +60,6 @@ npm run test:e2e
 
 Playwright builds and serves its own production preview on port 4180. The default projects cover a desktop viewport and a touch-enabled Pixel 7 viewport. Set `READER_BROWSER_CHANNEL` to `chrome` or `msedge` and use `npm run test:e2e -- --project=desktop` to exercise an installed desktop browser.
 
+The PR checks also run on Windows Edge and Chrome and tap through the reader on an Android 15 emulator. The Android check uses the emulator SDK’s bundled Chrome and a loopback connection to the built app.
+
 The original application and fixtures use the repository’s MIT licence. Vite includes third-party package and bundled font notices in the production build.

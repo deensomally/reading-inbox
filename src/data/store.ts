@@ -44,7 +44,10 @@ export class Library extends Dexie {
               !article.permissions.summarise)
           )
             await this.summaries.where("articleId").equals(article.id).delete();
-          await this.articles.put(article);
+          // Opening another tab with the same edition should leave active readers alone.
+          if (JSON.stringify(previous) !== JSON.stringify(article)) {
+            await this.articles.put(article);
+          }
           if (!(await this.states.get(article.id)))
             await this.states.add(initialState(article.id));
         }
