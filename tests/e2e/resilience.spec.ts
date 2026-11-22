@@ -78,6 +78,10 @@ test("installed shell assets, offline relaunch, uncached depth and saved state",
   await expect(page.locator(".original-body")).toContainText(
     "meet the train after dark.",
   );
+  // Private service routes must never resolve to the offline reading shell.
+  const apiTab = await context.newPage();
+  await expect(apiTab.goto("/api/articles")).rejects.toThrow();
+  await apiTab.close();
 });
 test("share uses the publisher destination with a copy-link fallback", async ({
   page,

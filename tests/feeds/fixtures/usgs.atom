@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:georss="http://www.georss.org/georss">
+<title>USGS Significant Earthquakes, Past Week</title>
+<entry><id>urn:earthquake-usgs-gov:us:6000ucly</id><title>M 5.9 - 238 km SW of Yanglong, China</title>
+<updated>2026-11-22T10:52:49.837Z</updated><link rel="alternate" type="text/html" href="https://earthquake.usgs.gov/earthquakes/eventpage/us6000ucly"/>
+<summary type="html"><![CDATA[<dl><dt>Location</dt><dd>238 km SW of Yanglong, China</dd></dl>]]></summary>
+<category term="earthquake"/><georss:point>0 0</georss:point></entry></feed>

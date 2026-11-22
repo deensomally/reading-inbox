@@ -31,8 +31,12 @@ try {
   await expect(page).toHaveTitle("Inbox · Reading Box");
   await page.getByRole("button", { name: "Appearance" }).tap();
   await expect(page.getByRole("radio", { name: "System" })).toBeChecked();
-  await page.getByRole("radio", { name: "Dark" }).tap();
+  const dark = page.getByRole("radio", { name: "Dark" });
+  await page.locator("label").filter({ has: dark }).tap();
+  await expect(dark).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-appearance", "dark");
   await page.getByRole("button", { name: "Close dialog" }).tap();
+  await expect(page.getByRole("dialog", { name: "Appearance" })).toBeHidden();
   await page.reload();
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await page.locator("#row-night-train").tap();
