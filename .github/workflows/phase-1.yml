@@ -36,6 +36,10 @@ jobs:
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - run: npm run test:e2e -- --project=${{ matrix.project }} --workers=1
+      - name: Sample three live publishers with the local service
+        if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
+        continue-on-error: true # The deterministic publisher tests above are required on every PR.
+        run: npm run test:feeds:live
       - if: matrix.channel == 'chrome'
         uses: actions/upload-artifact@v4
         with:
