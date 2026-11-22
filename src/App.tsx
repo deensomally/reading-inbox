@@ -72,6 +72,7 @@ export default function App() {
   const hash = useHash();
   const { collection, id, stage, publisher, discussion } = route(hash);
   const [loaded, setLoaded] = useState(false);
+  const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [failure, setFailure] = useState("");
   const [showAbout, setAbout] = useState(false);
   const [offline, setOffline] = useState(!navigator.onLine);
@@ -82,6 +83,8 @@ export default function App() {
   const origin = useRef<string | undefined>(undefined);
   const previous = useRef<string | undefined>(id);
   useEffect(() => {
+    const blocked = () => setUpgradeBlocked(true);
+    db.on("blocked", blocked);
     seedLibrary().then(
       () => setLoaded(true),
       (e) =>
@@ -93,20 +96,14 @@ export default function App() {
     window.addEventListener("online", online);
     window.addEventListener("offline", online);
     return () => {
+      db.on.blocked.unsubscribe(blocked);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", online);
       clearTimeout(noticeTimer.current);
     };
   }, []);
   const articles = useLiveQuery(
-    async () =>
-      loaded
-        ? (await db.articles.toArray()).sort((a, b) =>
-            (b.published ?? b.received).localeCompare(
-              a.published ?? a.received,
-            ),
-          )
-        : undefined,
+    async () => (loaded ? db.listDemoArticles() : undefined),
     [loaded],
   );
   const states = useLiveQuery(
@@ -119,7 +116,16 @@ export default function App() {
     s: byId.get(a.id) ?? initialState(a.id),
   }));
   const visible = rows.filter(({ s }) => belongs(collection, s));
-  const current = id ? rows.find(({ a }) => a.id === id) : visible[0];
+  const selected = id ? rows.find(({ a }) => a.id === id) : visible[0];
+  const selectedId = selected?.a.id;
+  const article = useLiveQuery(
+    () => (selectedId ? db.articles.get(selectedId) : undefined),
+    [selectedId],
+  );
+  const current =
+    selected && article?.id === selected.a.id
+      ? { a: article, s: selected.s }
+      : undefined;
   const ready = loaded && !!articles && !!states;
   useLayoutEffect(() => {
     if (ready && list.current && !id) {
@@ -135,7 +141,7 @@ export default function App() {
     previous.current = id;
   }, [collection, id, ready]);
   const pageTitle =
-    (id && current ? current.a.title : collection) + " · Reading Box";
+    (id && selected ? selected.a.title : collection) + " · Reading Box";
   useEffect(() => {
     document.title = pageTitle;
   }, [pageTitle]);
@@ -212,6 +218,12 @@ export default function App() {
         <main className="fallback" role="status">
           <BookOpen />
           <h1>{failure ? "Library unavailable" : "Opening your library…"}</h1>
+          {!failure && upgradeBlocked && (
+            <p>
+              Close other Reading Box tabs and windows to finish updating your
+              library. This window will continue automatically.
+            </p>
+          )}
           {failure && (
             <>
               <p>{failure}</p>
@@ -365,7 +377,9 @@ export default function App() {
           ) : (
             <section className="desk empty-desk">
               <BookOpen />
-              {id ? (
+              {selected ? (
+                <p role="status">Opening article…</p>
+              ) : id ? (
                 <>
                   <h2>Article unavailable</h2>
                   <button className="plain" onClick={back}>

@@ -2,6 +2,8 @@
 
 A local-first reading PWA for Android and Windows. Phase 1 includes eight fictional articles and three deterministic summary depths. The fourth depth opens the original. Everything works without an account or an API key.
 
+Phase 2 milestone 1 upgrades an existing library in place. [Windows setup and upgrade walkthrough](docs/LOCAL_LIBRARY_UPGRADE.md)
+
 ![Desktop reading desk with the Essence stage open](docs/preview/desktop.png)
 
 Choose **Appearance** in the header to switch between Light, Dark and System. On a phone, tap the sun-and-moon icon. System follows device changes automatically. The browser remembers your choice for future visits, including offline reading.
@@ -10,7 +12,7 @@ Choose **Appearance** in the header to switch between Light, Dark and System. On
 
 ## Try the demo
 
-On the Phase 1 branch, use Node.js 22.12 or newer and run these commands from the repository directory.
+Use Node.js 22.12 or newer and run these commands from the repository directory.
 
 ```sh
 npm ci
@@ -49,7 +51,7 @@ On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-conn
 - All demo publishers and discussion destinations are fictional. The post and discussion links stay within the local demo. Browser sharing hands the selected publisher URL to the device share sheet or copies it. A localhost link resolves on the receiving device only if it is running the same demo.
 - Live feeds, extraction, subscription management, search, additional filters, bulk operations and export are deferred to Phase 2. External AI requires separate provider and budget approval. Recommendations, sync and authorised discussion analysis belong to later milestones. [Approved plan](IMPLEMENTATION_PLAN.md)
 
-The Phase 2 proposal describes the first real-feed preview, its hosting costs and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
+The approved Phase 2 plan describes the first real-feed preview at milestone 3 and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
 
 ## Verification
 
