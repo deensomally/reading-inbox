@@ -49,6 +49,8 @@ On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-conn
 - All demo publishers and discussion destinations are fictional. The post and discussion links stay within the local demo. Browser sharing hands the selected publisher URL to the device share sheet or copies it. A localhost link resolves on the receiving device only if it is running the same demo.
 - Live feeds, extraction, subscription management, search, additional filters, bulk operations and export are deferred to Phase 2. External AI requires separate provider and budget approval. Recommendations, sync and authorised discussion analysis belong to later milestones. [Approved plan](IMPLEMENTATION_PLAN.md)
 
+The Phase 2 proposal describes the first real-feed preview, its hosting costs and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
+
 ## Verification
 
 ```sh
