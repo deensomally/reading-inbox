@@ -53,6 +53,48 @@ export interface Article extends Omit<Fixture, "delivery"> {
     summarise: boolean;
   };
 }
+export type ArticleListItem = Pick<
+  Article,
+  "id" | "title" | "publication" | "author" | "published" | "received"
+> & {
+  library: "demo";
+  newestFirst: number;
+};
+
+function articleDate({
+  published,
+  received,
+}: Pick<Article, "published" | "received">) {
+  const publicationTime = Date.parse(published ?? "");
+  return Number.isFinite(publicationTime)
+    ? { timestamp: publicationTime, prefix: "" }
+    : { timestamp: Date.parse(received), prefix: "Received " };
+}
+
+export function articleListItem({
+  id,
+  title,
+  publication,
+  author,
+  published,
+  received,
+}: Article): ArticleListItem {
+  // An ascending index keeps equal dates in the v1 order (article ID ascending).
+  const { timestamp } = articleDate({ published, received });
+  return {
+    id,
+    title,
+    publication,
+    author,
+    published,
+    received,
+    library: "demo",
+    // IndexedDB omits NaN index keys. Keep even an undated legacy row visible.
+    newestFirst: Number.isFinite(timestamp)
+      ? -timestamp
+      : Number.MAX_SAFE_INTEGER,
+  };
+}
 export interface ReadingState {
   id: string;
   saved: boolean;
@@ -91,12 +133,17 @@ export function belongs(collection: Collection, s: ReadingState) {
   if (collection === "Archive") return s.archived;
   return !s.archived && (collection === "Inbox" || !s.opened);
 }
-export function dateLabel(article: Article, long = false) {
+export function dateLabel(
+  article: Pick<Article, "published" | "received">,
+  long = false,
+) {
+  const { timestamp, prefix } = articleDate(article);
+  if (!Number.isFinite(timestamp)) return "Date unavailable";
   const date = new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: long ? "long" : "short",
     ...(long && { year: "numeric" }),
     timeZone: "UTC",
-  }).format(new Date(article.published ?? article.received));
-  return (article.published ? "" : "Received ") + date;
+  }).format(timestamp);
+  return prefix + date;
 }

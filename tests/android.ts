@@ -1,6 +1,8 @@
 // Runs only against an explicitly supplied Android emulator running Chrome.
 import { _android as android, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { upgradePreview } from "./upgrade/preview.ts";
+import { verifyUpgrade } from "./upgrade/journey.ts";
 const [device] = await android.devices();
 if (!device || !device.serial().startsWith("emulator-"))
   throw new Error(
@@ -65,6 +67,17 @@ try {
   await expect(page.getByText("Offline", { exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   console.log("Android reading journey and offline appearance passed");
+  await context.setOffline(false);
+  const site = await upgradePreview();
+  const port = "tcp:" + site.port;
+  try {
+    adb("reverse", port, port);
+    await verifyUpgrade(context, site);
+    console.log("Android Phase 1 library upgrade and rollback passed");
+  } finally {
+    adb("reverse", "--remove", port);
+    await site.close();
+  }
   await context.close();
 } finally {
   adb("shell", "am", "clear-debug-app");

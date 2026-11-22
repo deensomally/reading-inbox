@@ -23,6 +23,8 @@ jobs:
       READER_BROWSER_CHANNEL: ${{ matrix.channel }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # The upgrade test builds the actual merged Phase 1 revision.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -45,6 +47,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
