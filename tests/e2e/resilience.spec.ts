@@ -52,7 +52,13 @@ test("installed shell assets, offline relaunch, uncached depth and saved state",
   const manifest = await (
     await page.request.get("/manifest.webmanifest")
   ).json();
-  expect(manifest.display).toBe("standalone");
+  expect(manifest).toMatchObject({
+    name: "Reading Box",
+    short_name: "Reading Box",
+    display: "standalone",
+    start_url: "./",
+    scope: "./",
+  });
   expect(manifest.icons.map((i: { sizes: string }) => i.sizes)).toEqual([
     "192x192",
     "512x512",
@@ -141,6 +147,9 @@ test("regular browser profile accepts the PWA and relaunches the installed reade
     await page.goto("/");
     await page.locator("#row-night-train").waitFor();
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("radio", { name: "Dark" }).check();
+    await page.getByRole("button", { name: "Close dialog" }).click();
     const cdp = await context.newCDPSession(page);
     const { errors, manifest } = await cdp.send("Page.getAppManifest");
     expect(errors).toEqual([]);
@@ -166,6 +175,8 @@ test("regular browser profile accepts the PWA and relaunches the installed reade
       await cdp.send("PWA.launch", { manifestId });
       const app = await opened;
       await expect(app.locator("#row-night-train")).toBeVisible();
+      await expect(app.locator("html")).toHaveCSS("color-scheme", "dark");
+      await expect(app).toHaveTitle("Inbox · Reading Box");
       await app.locator("#row-night-train").click();
       await expect(app.locator(".summary-text")).toContainText("night train");
       await expect(app.getByText("Offline", { exact: true })).toBeVisible();

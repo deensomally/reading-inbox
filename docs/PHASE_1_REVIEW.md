@@ -1,4 +1,4 @@
-# Phase 1 review
+# Reading Box — Phase 1 review
 
 ## What to try
 
@@ -14,6 +14,12 @@ The demo starts with eight unread articles. On desktop, the reading desk preview
 | Inside the Saturday repair room        | A second complete publication with a dedicated discussion                                                                            |
 | Listening for the shape of a room      | Missing body, publisher handoff and unavailable summary                                                                              |
 | An index for the words we inherit      | Publication attribution when the byline is missing                                                                                   |
+
+## Appearance and existing libraries
+
+Open **Appearance** in the header, choose Dark and close the dialog. Reopen an article to see the same palette on the summary, original and publisher page. Switch to System, then change the device theme with the page open. The preference applies before the reading interface loads and survives a browser restart. The installed launch screen uses the app’s terracotta brand colour until the browser can display the document.
+
+Reading Box uses the original database, article identifiers, routes, manifest URL and app start URL. An upgrade check started with the previous PR build (`b5ae475`), saved and archived a story, opened two summary depths and scrolled its Original. After installing the updated service worker on the same origin and reopening the same profile, every IndexedDB record matched. The Original resumed at the saved offset and revisiting Brief used the existing cache.
 
 ## Acceptance coverage
 

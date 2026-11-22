@@ -25,6 +25,7 @@ import {
   type Stage,
 } from "./data/model";
 import { listUrl, navigate, readerUrl, route, useHash } from "./navigation";
+import { Appearance } from "./components/Appearance";
 import { Reader } from "./components/Reader";
 import { Dialog } from "./components/Dialogs";
 import { ArticleBody } from "./components/ArticleBody";
@@ -134,7 +135,7 @@ export default function App() {
     previous.current = id;
   }, [collection, id, ready]);
   const pageTitle =
-    (id && current ? current.a.title : collection) + " · Reading Inbox";
+    (id && current ? current.a.title : collection) + " · Reading Box";
   useEffect(() => {
     document.title = pageTitle;
   }, [pageTitle]);
@@ -170,7 +171,7 @@ export default function App() {
           <span className="brand-mark">
             <BookOpenText />
           </span>
-          Reading Inbox
+          Reading Box
         </a>
         {!publisher && (
           <nav className="collections" aria-label="Collections">
@@ -190,6 +191,7 @@ export default function App() {
           </nav>
         )}
         <div className="edition">
+          <Appearance />
           {offline && (
             <span className="offline">
               <WifiOff /> Offline
@@ -242,7 +244,7 @@ export default function App() {
             </>
           )}
           <p>
-            <a href="#/inbox">Return to Reading Inbox</a>
+            <a href="#/inbox">Return to Reading Box</a>
           </p>
         </main>
       ) : (

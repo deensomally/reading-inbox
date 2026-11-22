@@ -1,4 +1,4 @@
-# Codex repository guidance — Reading Inbox
+# Codex repository guidance — Reading Box
 
 Read `PRODUCT_SPEC.md` before planning or making code changes. It is the current product source of truth. Read `CODEX_START_HERE.md` for the initial task and development sequence.
 

@@ -9,7 +9,7 @@
 
 ## Initial Codex prompt (copy/paste)
 
-> I want you to start a new open-source app called **Reading Inbox** (working title). The user-approved requirements are in `PRODUCT_SPEC.md`, and the working instructions are in `AGENTS.md`.
+> I want you to start a new open-source app called **Reading Box**. The user-approved requirements are in `PRODUCT_SPEC.md`, and the working instructions are in `AGENTS.md`.
 >
 > **Begin with Phase 0 — technical feasibility and implementation plan.** Read both documents in full. Evaluate the quickest maintainable way to make a polished Android + Windows PC experience, with a strong preference for an installable responsive PWA. Research and verify current Substack RSS article extraction, paid-content boundaries and reader-discussion limitations rather than assuming unrestricted access. Assess AI summary costs, caching, API key security, data storage, and sync choices. Take inspiration from the open-source Feeder and re:ink projects without presuming that either needs to be forked.
 >

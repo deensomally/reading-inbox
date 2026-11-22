@@ -26,6 +26,13 @@ try {
     adb("shell", "getprop", "ro.build.version.release"),
     await page.evaluate(() => navigator.userAgent),
   );
+  await expect(page).toHaveTitle("Inbox · Reading Box");
+  await page.getByRole("button", { name: "Appearance" }).tap();
+  await expect(page.getByRole("radio", { name: "System" })).toBeChecked();
+  await page.getByRole("radio", { name: "Dark" }).tap();
+  await page.getByRole("button", { name: "Close dialog" }).tap();
+  await page.reload();
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await page.locator("#row-night-train").tap();
   for (const [stage, paragraphs] of [
     ["Essence", 1],
@@ -56,7 +63,8 @@ try {
     "meet the train after dark.",
   );
   await expect(page.getByText("Offline", { exact: true })).toBeVisible();
-  console.log("Android reading journey passed");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
+  console.log("Android reading journey and offline appearance passed");
   await context.close();
 } finally {
   adb("shell", "am", "clear-debug-app");

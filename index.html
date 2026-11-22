@@ -3,9 +3,60 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="theme-color" content="#faf9f6" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fffefa" />
+    <style>
+      :root {
+        --linen: light-dark(#f6f5f0, #191b18);
+        --paper: light-dark(#fffefa, #262824);
+        background: var(--linen);
+      }
+    </style>
+    <script>
+      // Resolve the saved preference before stylesheets, React or IndexedDB load.
+      (() => {
+        const key = "reading-box.appearance";
+        const root = document.documentElement;
+        const system = matchMedia("(prefers-color-scheme: dark)");
+        const chrome = document.querySelector('meta[name="theme-color"]');
+        function apply(value) {
+          const preference =
+            value === "dark" || value === "light" ? value : "system";
+          const dark =
+            preference === "system" ? system.matches : preference === "dark";
+          root.style.colorScheme = dark ? "dark" : "light";
+          chrome.content = dark ? "#262824" : "#fffefa";
+          if (root.dataset.appearance !== preference) {
+            root.dataset.appearance = preference;
+            window.dispatchEvent(new Event("appearancechange"));
+          }
+        }
+        function restore() {
+          let preference;
+          try {
+            preference = localStorage.getItem(key);
+          } catch {
+            /* Storage may be disabled. */
+          }
+          apply(preference);
+        }
+        restore();
+        system.addEventListener("change", () => apply(root.dataset.appearance));
+        window.addEventListener("storage", (event) => {
+          if (event.key === key || event.key === null) restore();
+        });
+        window.setReadingBoxAppearance = (preference) => {
+          apply(preference);
+          try {
+            localStorage.setItem(key, root.dataset.appearance);
+          } catch {
+            /* Keep the session choice. */
+          }
+        };
+      })();
+    </script>
     <link rel="icon" href="/mark.svg" />
-    <title>Reading Inbox</title>
+    <title>Reading Box</title>
   </head>
   <body>
     <div id="root"></div>
