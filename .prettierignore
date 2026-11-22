@@ -1,0 +1,11 @@
+node_modules
+dist
+playwright-report
+test-results
+package-lock.json
+AGENTS.md
+ARCHITECTURE.md
+PRODUCT_SPEC.md
+CODEX_START_HERE.md
+IMPLEMENTATION_PLAN.md
+LICENSE

@@ -1,4 +1,4 @@
-# Reading Inbox development plan
+# Reading Box development plan
 
 **Phase 0 · 19 November 2026 · Phased approach agreed. Phase 1 awaits document review and separate authorisation.**
 

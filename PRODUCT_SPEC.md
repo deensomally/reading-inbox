@@ -1,8 +1,8 @@
-# Reading Inbox — Product Specification (V1)
+# Reading Box — Product Specification (V1)
 
 **Status:** Agreed product direction; technical implementation to be designed with Codex.  
 **Target:** Open-source, cross-device reading application, initially optimised for Android and Windows PC.  
-**Working name:** Reading Inbox (placeholder, not an agreed product name).  
+**Product name:** Reading Box.
 **Source of requirements:** Product discussion with project owner, November 2026.
 
 ## 1. Product vision
@@ -144,7 +144,7 @@ The exact phase placement can change following feasibility work, but do not remo
 - Exact recommendation algorithm and limits; initial figures are design defaults to validate.
 - Whether recommended items are computed on-device, via a service, or initially rules-based.
 - API provider(s) and billing/key-management strategy.
-- Visual styling and brand name.
+- Further visual refinements following reader feedback.
 - How to store/cite article passages so AI summaries are traceable without reproducing restricted text beyond permitted access.
 - Article-email import design and Substack discussion data access permissions.
 
@@ -159,5 +159,5 @@ The exact phase placement can change following feasibility work, but do not remo
 - AI is a reading aid, not an authority.
 - Distinguish source text from model output.
 - Honest about content access and model limitations.
-- Minimal, calm, accessible interface.
+- Minimal, calm, accessible interface with Light, Dark and System appearance. Default to System and remember the reader’s selection on this device.
 - Open source, inspectable and respectful of user data.
