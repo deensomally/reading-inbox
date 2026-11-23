@@ -25,12 +25,20 @@ import {
 } from "../data/model";
 import { requestSummary } from "../data/store";
 import { useLibrary } from "../data/library-context";
-import { debianNotice } from "../../shared/reviewed-article";
+import { ServiceError } from "../data/connection";
+import {
+  originalText,
+  type OriginalCheck,
+  type PublisherCheckIssue,
+} from "../../shared/original";
+import { debianNotice, debianReview } from "../../shared/reviewed-article";
 import { ArticleBody, Discussion, PublisherLink } from "./ArticleBody";
 import { ManualCopy } from "./Dialogs";
 
 interface Props {
   a: Article;
+  offline: boolean;
+  checkOriginal?: (id: string) => Promise<OriginalCheck | undefined>;
   state: ReadingState;
   stage?: Stage;
   onStage: (s: Stage) => void;
@@ -51,6 +59,8 @@ export function DepthMark({ n }: { n: number }) {
 }
 export function Reader({
   a: current,
+  offline,
+  checkOriginal,
   state,
   stage,
   onStage,
@@ -66,6 +76,10 @@ export function Reader({
     current.bodyHash !== edition.bodyHash &&
     current.coverage === edition.coverage &&
     current.license === edition.license &&
+    current.subscriberOnly === edition.subscriberOnly &&
+    current.reason === edition.reason &&
+    current.pageUrl === edition.pageUrl &&
+    !!current.document === !!edition.document &&
     current.permissions.display &&
     edition.permissions.display &&
     current.permissions.copy === edition.permissions.copy;
@@ -85,14 +99,48 @@ export function Reader({
   const restored = useRef(false);
   const original = stage === "original";
   const allowed = a.permissions.display && a.coverage !== "missing";
+  const [pageCheck, setPageCheck] = useState<
+    "checking" | PublisherCheckIssue
+  >();
+  const [pageAttempt, retryPage] = useState(0);
+  useEffect(() => {
+    if (!original || !current.checkPage || !checkOriginal || offline) return;
+    let visible = true;
+    setPageCheck("checking");
+    void checkOriginal(current.sourceKey).then(
+      (result) => {
+        if (visible) setPageCheck(result?.issue);
+      },
+      () => {
+        if (visible)
+          setPageCheck({
+            message: "The local service could not check the publisher.",
+          });
+      },
+    );
+    return () => {
+      visible = false;
+    };
+  }, [
+    original,
+    offline,
+    current.checkPage,
+    current.sourceKey,
+    checkOriginal,
+    pageAttempt,
+  ]);
   const ready = live || original || !allowed || !!result;
-  const coverageLabel = !allowed
-    ? "Publisher only"
-    : a.coverage === "complete"
-      ? "Verified complete original"
-      : a.coverage === "excerpt"
-        ? "Publisher excerpt"
-        : "Completeness unverified";
+  const coverageLabel = a.subscriberOnly
+    ? allowed
+      ? "Subscriber-only · public preview"
+      : "Subscriber-only article"
+    : !allowed
+      ? "Publisher only"
+      : a.coverage === "complete"
+        ? "Verified complete original"
+        : a.coverage === "excerpt"
+          ? "Publisher excerpt"
+          : "Completeness unverified";
   const index = stage ? stages.indexOf(stage) : -1;
   const paragraphs =
     result && "paragraphs" in result ? result.paragraphs : undefined;
@@ -169,33 +217,87 @@ export function Reader({
     }
     await copy(url, "Publisher link");
   }
-  async function copyBody() {
-    const latest = live ? await db.articles.get(a.id) : a;
+  async function confirmCopy() {
+    if (a.pageUrl && checkOriginal && navigator.onLine) {
+      let revision: string | undefined;
+      try {
+        const result = await checkOriginal(a.sourceKey);
+        revision = result?.revision;
+        setPageCheck(result?.issue);
+      } catch (err) {
+        if (!(err instanceof ServiceError && err.status === 0)) throw err;
+      }
+      if (revision && revision !== a.bodyHash)
+        throw Error("The publisher edition changed. Review it before copying.");
+    }
+    const latest = await db.articles.get(a.id);
     if (
       !latest?.permissions.copy ||
       !latest.permissions.display ||
       latest.bodyHash !== a.bodyHash
-    ) {
-      notify("The article changed. Check the current edition before copying.");
-      return;
-    }
-    const text = bodyText(a.blocks);
-    const attribution = a.reviewedDebian
-      ? debianNotice + "\n" + a.publisher + "\n\n"
-      : live && a.license
-        ? [a.author, a.publication, a.publisher, a.license]
-            .filter(Boolean)
-            .join(" · ") + "\n\n"
-        : "";
-    await copy(
-      attribution + text,
+    )
+      throw Error(
+        "The article changed. Check the current edition before copying.",
+      );
+  }
+  async function copyBody() {
+    const text = a.document
+      ? originalText(a.document.nodes)
+      : bodyText(a.blocks);
+    const attribution =
+      a.license === debianReview.license
+        ? debianNotice.replace(debianReview.author, a.author ?? a.publication) +
+          "\n" +
+          a.publisher +
+          "\n\n"
+        : live && a.license
+          ? [a.author, a.publication, a.publisher, a.license]
+              .filter(Boolean)
+              .join(" · ") + "\n\n"
+          : "";
+    const value = attribution + text;
+    const label =
       a.coverage === "complete"
         ? "Article"
         : a.coverage === "excerpt"
           ? "Excerpt"
-          : "Text",
-      a.bodyHash,
-    );
+          : "Text";
+    if (!live) {
+      await copy(value, label, a.bodyHash);
+      return;
+    }
+    const confirmed = confirmCopy();
+    try {
+      if (
+        a.pageUrl &&
+        typeof ClipboardItem !== "undefined" &&
+        navigator.clipboard?.write
+      ) {
+        // Submit the copy gesture immediately. Release the bytes only after the revision check.
+        const bytes = confirmed.then(
+          () => new Blob([value], { type: "text/plain" }),
+        );
+        void bytes.catch(() => {}); // A denied clipboard may reject before requesting the item.
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "text/plain": bytes }),
+          ]);
+          notify(label + " copied");
+        } catch {
+          await confirmed;
+          setManual({ value, revision: a.bodyHash });
+        }
+      } else {
+        await confirmed;
+        await copy(value, label, a.bodyHash);
+      }
+    } catch (err) {
+      notify(
+        err instanceof Error
+          ? err.message
+          : "Could not confirm this article for copying.",
+      );
+    }
   }
   async function toggle(flag: "saved" | "archived") {
     try {
@@ -387,6 +489,34 @@ export function Reader({
                         : "AI summary · Demo"}
                   </span>
                 </div>
+                {original && current.checkPage && !offline && pageCheck && (
+                  <div className="page-status">
+                    <span role="status">
+                      {pageCheck === "checking" ? (
+                        "Checking the publisher edition…"
+                      ) : (
+                        <>
+                          {pageCheck.message}{" "}
+                          {a.pageUrl &&
+                            allowed &&
+                            "Showing the last retained publisher edition. "}
+                          {pageCheck.retryAt &&
+                            "Retry after " +
+                              new Date(pageCheck.retryAt).toLocaleString() +
+                              "."}
+                        </>
+                      )}
+                    </span>
+                    {pageCheck !== "checking" && (
+                      <button
+                        className="text-action"
+                        onClick={() => retryPage((n) => n + 1)}
+                      >
+                        Retry publisher check <RotateCcw />
+                      </button>
+                    )}
+                  </div>
+                )}
                 {a.coverage === "excerpt" && (
                   <p className="notice">
                     <strong>Excerpt only.</strong> {a.reason}
@@ -412,15 +542,39 @@ export function Reader({
                   </>
                 ) : original ? (
                   <>
-                    {live && a.coverage === "unverified" && (
-                      <p className="notice">{a.reason}</p>
-                    )}
+                    {live &&
+                      (a.coverage === "unverified" ||
+                        a.coverage === "excerpt") && (
+                        <p className="notice">{a.reason}</p>
+                      )}
                     <ArticleBody a={a} />
                     {live && a.license && (
                       <details className="discussion">
                         <summary>Source and licence</summary>
                         <div>
-                          {a.reviewedDebian && <p>{debianNotice}</p>}
+                          {a.pageUrl && (
+                            <p>
+                              Publisher page checked{" "}
+                              {a.pageCheckedAt &&
+                                new Date(a.pageCheckedAt).toLocaleDateString()}
+                              .{" "}
+                              <a
+                                href={a.pageUrl}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                View source edition
+                              </a>
+                            </p>
+                          )}
+                          {a.license === debianReview.license && (
+                            <p>
+                              {debianNotice.replace(
+                                debianReview.author,
+                                a.author ?? a.publication,
+                              )}
+                            </p>
+                          )}
                           <a href={a.license} target="_blank" rel="noreferrer">
                             Publisher licence
                           </a>

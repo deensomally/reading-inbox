@@ -150,6 +150,7 @@ export async function readResponse(response: IncomingMessage, limit: number) {
       "expires",
       "age",
       "content-type",
+      "x-robots-tag",
       "retry-after",
     ]) {
       const value = response.headers[name];
@@ -200,11 +201,15 @@ export function createDownloader(
     { until: number; rules: ReturnType<typeof robotsParser> }
   >();
   const cooldowns = new Map<string, FeedError>();
-  async function checkRobots(url: URL, signal: AbortSignal) {
+  async function checkRobots(
+    url: URL,
+    signal: AbortSignal,
+    purpose?: "page" | "image",
+  ) {
     let cached = robots.get(url.origin);
     if (!cached || cached.until <= now()) {
       const path = new URL("/robots.txt", url).href;
-      const response = await chain(path, signal, undefined, true);
+      const response = await chain(path, signal, undefined, true, purpose);
       if (
         response.status !== 200 &&
         response.status !== 404 &&
@@ -230,6 +235,7 @@ export function createDownloader(
     signal: AbortSignal,
     validators?: Validators,
     readingRobots = false,
+    purpose?: "page" | "image",
   ) {
     let url = publicUrl(start);
     const aliases = [url.href];
@@ -239,12 +245,16 @@ export function createDownloader(
       const throttled = cooldowns.get(url.origin);
       if (throttled?.retryAt && throttled.retryAt > now()) throw throttled;
       cooldowns.delete(url.origin);
-      if (!readingRobots) await checkRobots(url, signal);
+      if (!readingRobots) await checkRobots(url, signal, purpose);
       const headers: Record<string, string> = {
         "user-agent": agentName + "/1.0",
         accept: readingRobots
           ? "text/plain"
-          : "application/atom+xml, application/rss+xml, application/xml, text/xml, text/html;q=0.5",
+          : purpose === "image"
+            ? "image/png"
+            : purpose === "page"
+              ? "text/html"
+              : "application/atom+xml, application/rss+xml, application/xml, text/xml, text/html;q=0.5",
         "accept-encoding": "gzip, deflate, br",
       };
       if (validators?.url === url.href) {
@@ -256,7 +266,11 @@ export function createDownloader(
         url,
         headers,
         signal,
-        readingRobots ? 512 * 1024 : MAX_BYTES,
+        readingRobots
+          ? 512 * 1024
+          : purpose === "image"
+            ? 96 * 1024
+            : MAX_BYTES,
       );
       if (result.status === 429 || result.status === 503) {
         const failure = publisherError(result.status, result.headers, now());
@@ -269,9 +283,15 @@ export function createDownloader(
       }
       if (![301, 302, 303, 307, 308].includes(result.status))
         return { ...result, url: url.href, aliases };
+      if (purpose && !readingRobots)
+        throw new FeedError(
+          "page_redirect",
+          "The publisher redirected the reviewed resource. Open it at the publisher.",
+        );
       const location = result.headers.get("location");
       if (!location) break;
       const next = publicUrl(location, url.href);
+      if (purpose && next.origin !== url.origin) throw badUrl();
       if (url.protocol === "https:" && next.protocol === "http:")
         throw badUrl();
       next.hash = "";
@@ -284,10 +304,10 @@ export function createDownloader(
       "Publisher redirected too many times or omitted a destination.",
     );
   }
-  return async (url, validators) => {
+  return async (url, validators, purpose) => {
     const signal = AbortSignal.timeout(deadlineMs);
     try {
-      return await chain(url, signal, validators);
+      return await chain(url, signal, validators, false, purpose);
     } catch (err) {
       if (err instanceof FeedError) throw err;
       throw new FeedError(

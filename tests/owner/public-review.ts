@@ -6,6 +6,8 @@ import { createDownloader } from "../../service/network.ts";
 import { digest } from "../../service/types.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
 import { ownerPreview } from "./preview.ts";
+import { ccStory, debianDevelopers } from "../../service/page-policy.ts";
+import { addFeed } from "./journey.ts";
 import { verifyReviewed } from "./journey.ts";
 type Node = DefaultTreeAdapterMap["node"];
 function findArticle(n: Node): DefaultTreeAdapterMap["element"] | undefined {
@@ -48,6 +50,76 @@ export async function publicReview(
     await page.screenshot({
       path: join("playwright-report/owner-preview", platform + ".png"),
     });
+    await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(page).toHaveURL(/#\/subscriptions\/inbox$/);
+    await page
+      .getByRole("link", {
+        name: /Read original of New Debian Developers and Maintainers \(September and October 2026\)/,
+      })
+      .click();
+    await expect(page).toHaveURL(/\/original$/);
+    await expect
+      .poll(
+        async () => {
+          const stored = site.pageEvidence(debianDevelopers);
+          const headings = await page.locator(".desk h2").allTextContents();
+          return {
+            coverage: stored?.coverage,
+            reason: stored?.reason,
+            headings,
+          };
+        },
+        { timeout: 45000 },
+      )
+      .toMatchObject({
+        coverage: "complete",
+        headings: expect.arrayContaining(["Verified complete original"]),
+      });
+
+    const body = page.locator(".original-body");
+    await expect(body.locator("ul li")).toHaveCount(15);
+    await expect(body.locator("p").last()).toHaveText("Congratulations!");
+    console.log(
+      platform,
+      "live Debian public page verified through both lists and final paragraph",
+    );
+    await page.screenshot({
+      path: join("playwright-report/owner-preview", platform + "-original.png"),
+    });
+    await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(page).toHaveURL(/#\/subscriptions\/inbox$/);
+    await addFeed(
+      page,
+      "https://creativecommons.org/feed/",
+      "Creative Commons",
+    );
+    await page
+      .getByRole("link", {
+        name: "Read original of Commons Stories: Part 3",
+        exact: true,
+      })
+      .click();
+    await expect(body.locator("h2").first()).toHaveText(
+      "The commons is a commitment",
+      { timeout: 45000 },
+    );
+    await expect(body.locator("p").last()).toContainText(
+      "hopes for what comes next.",
+    );
+    await expect(
+      page.getByRole("heading", { name: "Completeness unverified" }),
+    ).toBeVisible();
+    await expect(
+      body.getByRole("link", { name: "View publisher image" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Copy full article text" }),
+    ).toHaveCount(0);
+    console.log(
+      platform,
+      "live Creative Commons text, final passage and restricted image handoff verified",
+      ccStory,
+    );
   } finally {
     await page.close();
     forward?.(site.port, false);

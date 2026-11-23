@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
@@ -12,6 +13,45 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    {
+      name: "reader-content-policy",
+      apply: "build",
+      transformIndexHtml: {
+        order: "post",
+        handler(html) {
+          const scripts = [
+            ...html.matchAll(
+              /<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi,
+            ),
+          ];
+          const hashes = scripts.map(
+            ([, body]) =>
+              "'sha256-" +
+              createHash("sha256")
+                .update(body.replaceAll("\r\n", "\n"))
+                .digest("base64") +
+              "'",
+          );
+          const csp = [
+            "default-src 'self'",
+            "script-src 'self' " + hashes.join(" "),
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "frame-src 'none'",
+            "base-uri 'none'",
+            "form-action 'self'",
+          ].join("; ");
+          return html.replace(
+            "<head>",
+            '<head><meta http-equiv="Content-Security-Policy" content="' +
+              csp +
+              '">',
+          );
+        },
+      },
+    },
     VitePWA({
       registerType: "prompt",
       injectRegister: "script",

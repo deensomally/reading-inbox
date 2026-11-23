@@ -4,6 +4,8 @@ A local-first reading PWA for Android and Windows. Phase 1 includes eight fictio
 
 The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
 
+Milestone 4 adds on-demand, permission-checked publisher originals with structured text, licensed figures, offline copy and publisher handoffs. [Test faithful originals on Windows and Android](docs/FAITHFUL_ORIGINALS.md)
+
 Phase 2 milestone 1 upgrades an existing library in place. [Windows setup and upgrade walkthrough](docs/LOCAL_LIBRARY_UPGRADE.md)
 
 Phase 2 milestone 2 adds a local RSS, Atom and Substack collector. Try it from PowerShell or through the Subscriptions inbox. **Keep the service running on an awake, connected PC to collect while the reader is closed.** [Start, stop and test the feed service on Windows](docs/DURABLE_FEED_SERVICE.md)

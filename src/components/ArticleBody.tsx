@@ -1,4 +1,5 @@
 import { ExternalLink, ChevronRight } from "lucide-react";
+import { StructuredOriginal } from "./StructuredOriginal";
 import type { Article } from "../data/model";
 import { useLibrary } from "../data/library-context";
 function useHandoff(a: Article) {
@@ -27,56 +28,61 @@ export function ArticleBody({ a }: { a: Article }) {
     return <p>{a.reason ?? "The article text is unavailable."}</p>;
   return (
     <div className="original-body">
-      {a.blocks.map((b, i) => {
-        if (b.kind === "figure")
+      {a.document ? (
+        <StructuredOriginal nodes={a.document.nodes} />
+      ) : (
+        a.blocks.map((b, i) => {
+          if (b.kind === "figure")
+            return (
+              <figure key={i}>
+                <img src={b.src} alt={b.alt} width={800} height={220} />
+                <figcaption>{b.caption}</figcaption>
+              </figure>
+            );
+          if (b.kind === "list")
+            return (
+              <ul key={i}>
+                {b.items.map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+            );
+          if (b.kind === "heading") return <h3 key={i}>{b.text}</h3>;
+          if (b.kind === "quote")
+            return <blockquote key={i}>{b.text}</blockquote>;
           return (
-            <figure key={i}>
-              <img src={b.src} alt={b.alt} width={800} height={220} />
-              <figcaption>{b.caption}</figcaption>
-            </figure>
+            <p key={i}>
+              {b.inlineLink && b.text.includes(b.inlineLink.text) ? (
+                <>
+                  {b.text.slice(0, b.text.indexOf(b.inlineLink.text))}
+                  <a href={b.inlineLink.href} target="_blank" rel="noreferrer">
+                    {b.inlineLink.text}
+                  </a>
+                  {b.text.slice(
+                    b.text.indexOf(b.inlineLink.text) +
+                      b.inlineLink.text.length,
+                  )}
+                </>
+              ) : (
+                b.text
+              )}
+              {b.link && (
+                <>
+                  {" "}
+                  <a
+                    href={b.link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={handoff}
+                  >
+                    {b.link.text}
+                  </a>
+                </>
+              )}
+            </p>
           );
-        if (b.kind === "list")
-          return (
-            <ul key={i}>
-              {b.items.map((t) => (
-                <li key={t}>{t}</li>
-              ))}
-            </ul>
-          );
-        if (b.kind === "heading") return <h3 key={i}>{b.text}</h3>;
-        if (b.kind === "quote")
-          return <blockquote key={i}>{b.text}</blockquote>;
-        return (
-          <p key={i}>
-            {b.inlineLink && b.text.includes(b.inlineLink.text) ? (
-              <>
-                {b.text.slice(0, b.text.indexOf(b.inlineLink.text))}
-                <a href={b.inlineLink.href} target="_blank" rel="noreferrer">
-                  {b.inlineLink.text}
-                </a>
-                {b.text.slice(
-                  b.text.indexOf(b.inlineLink.text) + b.inlineLink.text.length,
-                )}
-              </>
-            ) : (
-              b.text
-            )}
-            {b.link && (
-              <>
-                {" "}
-                <a
-                  href={b.link.href}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={handoff}
-                >
-                  {b.link.text}
-                </a>
-              </>
-            )}
-          </p>
-        );
-      })}
+        })
+      )}
     </div>
   );
 }

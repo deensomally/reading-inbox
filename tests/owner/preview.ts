@@ -8,10 +8,15 @@ import { Catalog, INTERVAL } from "../../service/catalog.ts";
 import { feedApp } from "../../service/app.ts";
 import { readProofs } from "../../service/config.ts";
 import { publisher, fixture, rss, item, example } from "../feeds/publisher.ts";
+import { addNotebook, sourceOrigin, riverProof } from "../originals/source.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
-export async function ownerPreview(usePublicNetwork = false) {
+export async function ownerPreview(
+  usePublicNetwork = false,
+  readerDirectory = "dist",
+) {
   const directory = mkdtempSync(join(tmpdir(), "reading-box-owner-"));
   const publisherSite = await publisher();
+  addNotebook(publisherSite);
   const testSource = example.replace("/feed", "/journal");
   publisherSite.routes.set("/journal", {
     body: rss(
@@ -35,7 +40,7 @@ export async function ownerPreview(usePublicNetwork = false) {
   const web = await preview({
     configFile: false,
     root: resolve("."),
-    build: { outDir: "dist" },
+    build: { outDir: readerDirectory },
     logLevel: "silent",
     preview: {
       host: "127.0.0.1",
@@ -59,6 +64,8 @@ export async function ownerPreview(usePublicNetwork = false) {
       readerPort: port,
       proofs,
       ...(!usePublicNetwork && {
+        proofs: new Map([...proofs, riverProof]),
+        pageOrigins: new Set([sourceOrigin]),
         now: () => now,
         jitter: () => 0,
         download: publisherSite.download,
@@ -78,8 +85,16 @@ export async function ownerPreview(usePublicNetwork = false) {
     port,
     url: "http://localhost:" + port,
     testSource,
+    publisher: publisherSite,
     start,
     stop,
+    setNotebookPageStatus(status: 200 | 403 | 503) {
+      if (status === 200) addNotebook(publisherSite);
+      else {
+        now += 60001; // Expire the last successful page check.
+        publisherSite.routes.set("/river", { status });
+      }
+    },
     async code() {
       const result = await service!.app.inject({
         method: "POST",
@@ -99,6 +114,20 @@ export async function ownerPreview(usePublicNetwork = false) {
     },
     observed() {
       return db.articles("local", 100).items.map((a) => a.title as string);
+    },
+    pageEvidence(url: string) {
+      const row = db.db
+        .prepare(
+          "SELECT a.id FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE f.owner=? AND json_extract(a.metadata,'$.url')=?",
+        )
+        .get("local", url);
+      if (!row) return undefined;
+      const a = db.article("local", String(row.id));
+      return {
+        coverage: a.coverage,
+        reason: a.reason,
+        pageCandidate: a.pageCandidate,
+      };
     },
     async publicEdition() {
       const id = db.find("local", debianReview.feed)!.id;

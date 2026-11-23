@@ -10,6 +10,9 @@ import {
   type FeedContent,
 } from "./types.ts";
 
+import { originalText } from "../shared/original.ts";
+import { feedStructure } from "./structure.ts";
+import { pageCandidate } from "./page-policy.ts";
 const ATOM = "http://www.w3.org/2005/Atom";
 const DC = "http://purl.org/dc/elements/1.1/";
 const CONTENT = "http://purl.org/rss/1.0/modules/content/";
@@ -130,7 +133,7 @@ function atomLink(node: Xml, rel: string) {
   const target = children(node, "link", ATOM).find(
     (n) =>
       (n.attrs.rel ?? "alternate") === rel &&
-      (rel !== "alternate" ||
+      (!["alternate", "replies"].includes(rel) ||
         !n.attrs.type ||
         /^(text\/html|application\/xhtml\+xml)$/i.test(n.attrs.type)),
   );
@@ -210,32 +213,62 @@ export function discoverAlternate(html: string, page: string) {
 }
 
 function licenseOf(node: Xml): string | null {
-  const rights =
-    value(child(node, "rights", DC)) ||
-    value(child(node, "rights", ATOM)) ||
-    value(child(node, "copyright"));
-  if (rights && !/^https?:\/\/creativecommons\.org\//i.test(rights))
-    return "unreviewed";
-  const explicit =
-    atomLink(node, "license") ??
-    CC.map((ns) => value(child(node, "license", ns))).find(Boolean) ??
-    rights;
-  if (!explicit) return null;
-  return /^https?:\/\/creativecommons\.org\/(?:licenses\/by\/4\.0|publicdomain\/zero\/1\.0)\/?$/i.test(
-    explicit.trim(),
-  )
-    ? explicit.trim().replace(/^http:/i, "https:")
-    : "unreviewed";
+  const values = [
+    ...children(node, "rights", DC).map(value),
+    ...children(node, "rights", ATOM).map(value),
+    ...children(node, "copyright").map(value),
+    ...children(node, "link", ATOM)
+      .filter((n) => n.attrs.rel === "license")
+      .map((n) => link(n.attrs.href, n.base) ?? "unreviewed"),
+    ...CC.flatMap((ns) => children(node, "license", ns).map(value)),
+  ].filter(Boolean);
+  if (!values.length) return null;
+  const normalized = values.map((v) =>
+    /^https?:\/\/creativecommons\.org\/(?:licenses\/by\/4\.0|publicdomain\/zero\/1\.0)\/?$/i.test(
+      v,
+    )
+      ? v.replace(/^http:/i, "https:").replace(/\/?$/, "/")
+      : "unreviewed",
+  );
+  return new Set(normalized).size === 1 ? normalized[0] : "unreviewed";
 }
 
 export type Proofs = ReadonlyMap<string, string>; // Feed and article URL pair -> reviewed plain-text SHA-256.
 export function reviewKey(feed: string, article: string) {
   return JSON.stringify([feed, article]);
 }
+function xhtmlBody(node: Xml) {
+  return node.ns === ATOM && node.attrs.type?.toLowerCase() === "xhtml"
+    ? child(node, "div", "http://www.w3.org/1999/xhtml")
+    : undefined;
+}
+function serializeXhtml(n: Xml | string): string {
+  const escape = (s: string) =>
+    s
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll('"', "&quot;");
+  if (typeof n === "string") return escape(n);
+  if (n.ns !== "http://www.w3.org/1999/xhtml") return "<object></object>";
+  const attrs = Object.entries(n.attrs)
+    .map(([k, v]) => " " + k + '="' + escape(v) + '"')
+    .join("");
+  return (
+    "<" +
+    n.name +
+    attrs +
+    ">" +
+    n.children.map(serializeXhtml).join("") +
+    "</" +
+    n.name +
+    ">"
+  );
+}
 function readableFormat(node: Xml) {
   return (
     !node.attrs.src &&
-    (!node.attrs.type ||
+    (!!xhtmlBody(node) ||
+      !node.attrs.type ||
       ["text", "html", "text/plain", "text/html"].includes(
         node.attrs.type.toLowerCase(),
       ))
@@ -247,11 +280,50 @@ function contentOf(
   license: string | null,
   permittedStorage: boolean,
   proof: string | undefined,
+  base: string,
 ): FeedContent {
   if (full && summary && (!readableFormat(full) || !value(full)))
     full = undefined;
   const supplied = full ?? summary;
-  const raw = value(supplied);
+  const xhtml = supplied && xhtmlBody(supplied);
+  const raw = xhtml
+    ? xhtml.children.map(serializeXhtml).join("")
+    : value(supplied);
+  if (xhtml) base = xhtml.base;
+  const subscriberOnly =
+    /(?:only (?:available )?to (?:paid )?subscribers|for (?:paid|paying) subscribers|subscriber[- ]only|subscribe to (?:read|continue|unlock)|"isAccessibleForFree"\s*:\s*"?false|class=["'][^"']*(?:paywall|subscription-wall))/i.test(
+      raw,
+    );
+  if (subscriberOnly) {
+    // Only a separately supplied public summary can survive a subscriber-only signal.
+    const fallback =
+      full && summary && summary !== supplied
+        ? contentOf(
+            undefined,
+            summary,
+            license,
+            permittedStorage,
+            undefined,
+            base,
+          )
+        : undefined;
+    return {
+      coverage: "excerpt",
+      paragraphs: fallback?.paragraphs ?? [],
+      document: fallback?.document,
+      license: fallback?.license ?? null,
+      permissions: fallback?.permissions ?? {
+        display: false,
+        retain: false,
+        copy: false,
+        export: false,
+        summarise: false,
+      },
+      subscriberOnly: true,
+      reason:
+        "The publisher identifies this as subscriber-only. Open the post for access.",
+    };
+  }
   const plain =
     supplied?.ns === ATOM
       ? ["text", "text/plain"].includes(
@@ -288,6 +360,10 @@ function contentOf(
   const display = blocks.length > 0;
   return {
     coverage,
+    ...(retain &&
+      !plain &&
+      text.length <= 65536 && { document: feedStructure(raw, base) }),
+
     license: licensed ? license : null,
     paragraphs: blocks,
     reason: !raw
@@ -296,13 +372,15 @@ function contentOf(
         ? "The publisher requested no storage."
         : !licensed
           ? "Text reuse has no reviewed permission. Open the publisher link."
-          : !supported
-            ? "This feed content format is unavailable in the basic reader."
-            : complete
-              ? "The licensed text matches the reviewed original."
-              : preview
-                ? "Publisher-supplied preview."
-                : "Completeness has not been verified.",
+          : text.length > 65536
+            ? "This edition exceeds the retained text limit. Continue on the publisher site."
+            : !supported
+              ? "This feed content format is unavailable in the basic reader."
+              : complete
+                ? "The licensed text matches the reviewed original."
+                : preview
+                  ? "Publisher-supplied preview."
+                  : "Completeness has not been verified.",
     permissions: {
       display,
       retain: display,
@@ -316,7 +394,11 @@ function contentOf(
 export function parseFeed(
   input: string,
   feedUrl: string,
-  { storeText = true, proofs = new Map<string, string>() as Proofs } = {},
+  {
+    storeText = true,
+    proofs = new Map<string, string>() as Proofs,
+    pageOrigins = new Set<string>() as ReadonlySet<string>,
+  } = {},
 ): ParsedFeed {
   const root = xmlTree(input, feedUrl);
   const atom = root.ns === ATOM && root.name === "feed";
@@ -375,6 +457,9 @@ export function parseFeed(
       license,
       storeText,
       url ? proofs.get(reviewKey(feedUrl, url)) : undefined,
+      (full ?? summary)?.attrs["xml:base"]
+        ? (full ?? summary)!.base
+        : (url ?? n.base),
     );
     const reviewed =
       storeText &&
@@ -407,6 +492,27 @@ export function parseFeed(
           },
         };
     }
+    const candidate =
+      storeText &&
+      !content.subscriberOnly &&
+      pageCandidate(feedUrl, url, license, pageOrigins);
+    if (candidate) {
+      if (candidate.kind === "debian" && full?.attrs.type === "html")
+        candidate.feedDigest = digest(value(full).replace(/\s+/g, " ").trim());
+      if (
+        candidate.kind === "licensed" &&
+        full &&
+        content.permissions.display &&
+        content.coverage !== "excerpt" &&
+        value(full).length <= 65536
+      )
+        candidate.feedDigest = digest(
+          content.document
+            ? originalText(content.document.nodes)
+            : content.paragraphs.join("\n\n"),
+        );
+      content.pageCandidate = candidate;
+    }
     const permissionSource = reviewed
       ? "entry"
       : license && license !== "unreviewed"
@@ -434,7 +540,9 @@ export function parseFeed(
           author,
           published,
           updated,
-          value(full ?? summary),
+          full && xhtmlBody(full)
+            ? serializeXhtml(xhtmlBody(full)!)
+            : value(full ?? summary),
         ]),
       ),
       content,
@@ -446,6 +554,7 @@ export function parseFeed(
     .filter(Boolean);
   return {
     title: publication,
+    pageRestriction: inheritedLicense === "unreviewed",
     license: inheritedLicense === "unreviewed" ? null : inheritedLicense,
     ttl: Number.isSafeInteger(ttl) && ttl > 0 ? ttl : 0,
     entries,

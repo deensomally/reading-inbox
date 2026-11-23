@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { Catalog } from "./catalog.ts";
 import { feedApp } from "./app.ts";
-import { readProofs, settings } from "./config.ts";
+import { readProofs, readPageOrigins, settings } from "./config.ts";
 
 const config = settings();
 process.umask(0o077);
@@ -9,7 +9,10 @@ mkdirSync(config.directory, { recursive: true, mode: 0o700 });
 const proofs = readProofs(config.directory);
 const catalog = new Catalog(config.database);
 catalog.reconcileProofs(proofs);
-const { app, poller } = feedApp(catalog, { proofs });
+const { app, poller } = feedApp(catalog, {
+  proofs,
+  pageOrigins: readPageOrigins(config.directory),
+});
 let reader: import("vite").PreviewServer | undefined;
 app.addHook("onClose", async () => {
   await reader?.close();

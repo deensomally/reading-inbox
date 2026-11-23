@@ -65,3 +65,23 @@ export function readProofs(directory: string) {
   }
   return proofs;
 }
+
+// Extra sources require an owner review in addition to licence evidence on both documents.
+export function readPageOrigins(directory: string): ReadonlySet<string> {
+  const path = join(directory, "original-sources.json");
+  if (!existsSync(path)) return new Set();
+  const origins: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    !Array.isArray(origins) ||
+    !origins.every(
+      (value) =>
+        typeof value === "string" &&
+        publicUrl(value).origin === value &&
+        value.startsWith("https://"),
+    )
+  )
+    throw Error(
+      "original-sources.json requires an array of reviewed HTTPS origins.",
+    );
+  return new Set(origins);
+}
