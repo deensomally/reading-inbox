@@ -1,3 +1,5 @@
+import { previewOpml, validateOutline, exportOpml } from "./opml.ts";
+import { opmlByteLimit, type Outline } from "../shared/opml.ts";
 import Fastify from "fastify";
 import { Catalog } from "./catalog.ts";
 import { Poller, type PollOptions } from "./poller.ts";
@@ -172,6 +174,57 @@ export function feedApp(
           },
     );
   });
+  app.post<{ Body: { xml: string } }>(
+    "/api/opml/preview",
+    {
+      bodyLimit: 6 * opmlByteLimit + 128,
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["xml"],
+          properties: { xml: { type: "string", maxLength: opmlByteLimit } },
+        },
+      },
+    },
+    async (req) => ({
+      rows: previewOpml(catalog, req.installation, req.body.xml),
+    }),
+  );
+  const outlineOptions = {
+    bodyLimit: 128 * 1024,
+    schema: {
+      body: {
+        type: "object",
+        additionalProperties: false,
+        required: ["xmlUrl", "title", "folders"],
+        properties: {
+          xmlUrl: { type: "string", minLength: 1, maxLength: 4096 },
+          htmlUrl: { type: "string", minLength: 1, maxLength: 4096 },
+          title: { type: "string", maxLength: 512 },
+          folders: {
+            type: "array",
+            maxItems: 16,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        },
+      },
+    },
+  };
+  app.post<{ Body: Outline }>("/api/opml/check", outlineOptions, async (req) =>
+    poller.inspectOutline(req.installation, validateOutline(req.body)),
+  );
+  app.post<{ Body: Outline }>(
+    "/api/opml/import",
+    outlineOptions,
+    async (req) => {
+      const entry = validateOutline(req.body);
+      return poller.subscribe(req.installation, entry.xmlUrl, entry);
+    },
+  );
+  app.get("/api/opml/export", async (req) => ({
+    xml: exportOpml(catalog, req.installation),
+  }));
   app.get("/api/subscriptions", async (req) => ({
     items: catalog.subscriptions(req.installation),
   }));

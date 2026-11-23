@@ -62,7 +62,7 @@ export function publicUrl(input: string, base?: string) {
           host,
         )) ||
     [...url.searchParams.keys()].some((k) =>
-      /(?:^|[-_])(token|key|auth|signature|secret|password|jwt|sig)(?:$|[-_])/i.test(
+      /(?:^|[-_])(token|key|apikey|auth|authorization|credential|session(?:id)?|bearer|accesskey|signature|secret|password|jwt|sig)(?:$|[-_])/i.test(
         k.replace(/([a-z])([A-Z])/g, "$1_$2"),
       ),
     ) ||

@@ -1,3 +1,4 @@
+import type { Outline } from "../shared/opml.ts";
 import { Catalog, describeFeed, type Edition, type Feed } from "./catalog.ts";
 import { createDownloader, subscriptionUrl } from "./network.ts";
 import {
@@ -129,24 +130,67 @@ export class Poller {
           (parsed ? null : (f?.modified ?? null))),
     };
   }
-  subscribe(owner: string, input: string) {
+  inspectOutline(owner: string, entry: Outline) {
+    return this.queue(
+      JSON.stringify(["opml-check", owner, entry]),
+      async () => {
+        let canonical = entry.xmlUrl;
+        let known = this.catalog.find(owner, canonical);
+        let title = known?.title;
+        if (!known?.active) {
+          const edition = await this.edition(canonical);
+          canonical = edition.aliases.at(-1)!;
+          known = edition.aliases
+            .map((url) => this.catalog.find(owner, url))
+            .find(Boolean);
+          title = edition.parsed!.title;
+        }
+        return {
+          canonical: known?.url ?? canonical,
+          title,
+          active: !!known?.active,
+          storedFolder:
+            !!known?.active && this.catalog.hasOutline(known.id, entry.folders),
+        };
+      },
+    );
+  }
+  subscribe(owner: string, input: string, outline?: Outline) {
     const url = subscriptionUrl(input);
-    return this.queue(JSON.stringify(["add", owner, url]), async () => {
-      const prior = this.catalog.find(owner, url);
-      if (prior?.active)
-        return { status: "subscribed", subscription: describeFeed(prior) };
-      if (prior) {
-        this.catalog.reactivate(owner, prior.id, this.now());
-        return this.poll(owner, prior.id, true);
-      }
-      const edition = await this.edition(url);
-      return {
-        status: "subscribed",
-        subscription: describeFeed(
-          this.catalog.subscribe(owner, edition, this.now(), this.jitter()),
-        ),
-      };
-    });
+    return this.queue(
+      JSON.stringify(["add", owner, url, outline]),
+      async () => {
+        const prior = this.catalog.find(owner, url);
+        if (prior) {
+          const accepted = this.catalog.acceptKnown(
+            owner,
+            prior.id,
+            this.now(),
+            outline,
+          );
+          if (accepted.added)
+            return { ...(await this.poll(owner, prior.id, true)), added: true };
+          return {
+            status: "subscribed",
+            subscription: describeFeed(accepted),
+            added: false,
+          };
+        }
+        const edition = await this.edition(url);
+        const accepted = this.catalog.subscribe(
+          owner,
+          edition,
+          this.now(),
+          this.jitter(),
+          outline,
+        );
+        return {
+          status: "subscribed",
+          subscription: describeFeed(accepted),
+          added: accepted.added,
+        };
+      },
+    );
   }
   private async poll(
     owner: string,

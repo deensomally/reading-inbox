@@ -322,7 +322,7 @@ it("preserves pairing identity, a delivery cursor and article IDs while upgradin
         Date.now() + 100000,
       );
     db.db.exec(
-      "DROP TRIGGER clear_page; DROP TABLE page_editions; DELETE FROM settings WHERE name='page-origins'; PRAGMA user_version=1",
+      "DROP TABLE subscription_outlines; DROP TRIGGER clear_page; DROP TABLE page_editions; DELETE FROM settings WHERE name='page-origins'; PRAGMA user_version=1",
     );
     await service.app.close();
     db = new Catalog(file);
