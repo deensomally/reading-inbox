@@ -41,7 +41,7 @@ async function rememberScroll(page: Page, stage: string, offset: number) {
     .toBe(offset);
 }
 
-async function waitForNewWorker(page: Page) {
+export async function waitForNewWorker(page: Page) {
   await page.evaluate(async () => {
     await (await navigator.serviceWorker.ready).update();
   });
@@ -167,7 +167,7 @@ export async function verifyUpgrade(
     await context.setOffline(false);
   }
   // A rollback of the UI must still use the upgraded database, without a downgrade.
-  await site.publish("phase1");
+  await site.publish("previous");
   await waitForNewWorker(page);
   await page.goto("about:blank");
   await page.goto(collection);

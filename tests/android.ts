@@ -1,8 +1,12 @@
 // Runs only against an explicitly supplied Android emulator running Chrome.
 import { _android as android, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { upgradePreview } from "./upgrade/preview.ts";
+import {
+  subscriptionUpgradePreview,
+  upgradePreview,
+} from "./upgrade/preview.ts";
 import { verifyUpgrade } from "./upgrade/journey.ts";
+import { verifySubscriptionUpgrade } from "./upgrade/subscriptions.ts";
 import { ownerPreview } from "./owner/preview.ts";
 import { verifyReviewed } from "./owner/journey.ts";
 import { readNotebook, readThroughOutage } from "./originals/journey.ts";
@@ -113,6 +117,19 @@ try {
   } finally {
     forward(owner.port, false);
     await owner.close();
+  }
+  const upgraded = await subscriptionUpgradePreview();
+  const subscriptionPage = await context.newPage();
+  try {
+    forward(upgraded.port, true);
+    await verifySubscriptionUpgrade(subscriptionPage, upgraded);
+    console.log(
+      "Android Milestone 3 offline subscription upgrade and publisher check on reconnect passed",
+    );
+  } finally {
+    await subscriptionPage.close();
+    forward(upgraded.port, false);
+    await upgraded.close();
   }
   if (process.env.READING_BOX_LIVE_REVIEW === "1")
     await publicReview(context, "android", forward);

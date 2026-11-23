@@ -1,6 +1,6 @@
 # Test a publisher Original on Windows
 
-Use Edge or Chrome and Node.js 24 LTS. A published feed and the reader on your own PC are enough for this review.
+Use Brave, Edge or Chrome and Node.js 24 LTS. A published feed and the reader on your own PC are enough for this review.
 
 1. **Back up the service directory before starting Milestone 4.** Exit every running Reading Box service with **Ctrl+C** and wait for the PowerShell prompt. The first Milestone 4 start upgrades SQLite from schema 1 to 2 in place. On an existing installation, run this in the same PowerShell environment you use to start Reading Box. A first-time installation can skip the backup.
 
@@ -32,6 +32,12 @@ Use Edge or Chrome and Node.js 24 LTS. A published feed and the reader on your o
 5. In Inbox, use the book beside **New Debian Developers and Maintainers (September and October 2026)**. Opening Original checks its public page. Expect **Verified complete original**, two lists containing 7 and 8 names, and the last paragraph **Congratulations!**. Click **Copy full article text** and paste into Notepad. The source and MIT notice precede the article. The collapsed **Reader discussion** beneath the text offers the publisher post when the feed supplies no comments destination. [Publisher article](https://bits.debian.org/2026/11/new-developers-2026-11.html) · [Bits from Debian terms](https://bits.debian.org/pages/about.html) · [Debian licensing terms](https://www.debian.org/license)
 6. Add `https://creativecommons.org/feed/` and open **Commons Stories: Part 3**. Compare the opening, linked references, section headings, emphasis and last paragraph with the publisher. The portrait has a description and **View publisher image**. The reader labels completeness unverified because the portrait lacks separately confirmed image permission. Copy uses **Copy available text**. Publisher feed windows can change. [Publisher article](https://creativecommons.org/2026/11/05/commons-stories-part-3/) · [Creative Commons policies](https://creativecommons.org/policies/)
 7. Save an article and return to the list. After the first online load and reload, disconnect the network and reopen the installed reader. Try the saved Original, its copy action and dark mode. Reconnect and restart the same command. Android Chrome uses the same browser flow over the existing private USB tunnel. Pair a separate Android profile and forward the reader port only. [Pairing, service restarts and Android USB steps](RSS_OWNER_PREVIEW.md#android-over-a-private-usb-connection)
+
+## Retest an existing Milestone 3 browser library
+
+1. After updating the reader and service as above, use the **same browser profile, hostname and port**. Close all Reading Box tabs and installed app windows, then reopen the reader so the updated PWA can take over. Leave the browser storage and pairing in place.
+2. Open **Original** on an eligible article already in your library. On its first connection, the updated reader replays the service’s current editions in pages of 24 and restores publisher-check eligibility. If the first launch is offline, your existing articles and reading state stay available. Leave Original open and reconnect. It will check the eligible page automatically.
+3. Check the Debian closing paragraph and the Creative Commons image handoff from the walkthrough, then reopen a saved or archived article and check your progress. A restart during reconciliation resumes at the last committed page. Later launches fetch incremental deliveries.
 
 ## Rolling back to Milestone 3
 
@@ -68,4 +74,12 @@ npx.cmd playwright install chromium
 npm.cmd run test:e2e
 ```
 
-CI also exercises Windows Edge, Windows Chrome and Chrome on an Android 15 emulator. The live checks depend on the publishers retaining the reviewed editions. A physical Android handset and TalkBack or Narrator require a hands-on review.
+To exercise the upgrade in an isolated test profile using an installed copy of Brave, set its executable path in PowerShell and run the focused test. The test builds the released Milestone 3 PWA, pairs it, reads and saves an article, then opens the updated PWA offline and reconnects with the publisher-only article still open.
+
+```powershell
+$env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'
+npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint"
+Remove-Item Env:READER_BROWSER_EXECUTABLE
+```
+
+CI exercises the subscription upgrade in Windows Brave, Edge and Chrome, mobile Chromium and Chrome on an Android 15 emulator. The live checks depend on the publishers retaining the reviewed editions. A physical Android handset and TalkBack or Narrator require a hands-on review.

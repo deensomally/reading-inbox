@@ -15,6 +15,9 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         channel: process.env.READER_BROWSER_CHANNEL,
+        launchOptions: {
+          executablePath: process.env.READER_BROWSER_EXECUTABLE,
+        },
         viewport: { width: 1366, height: 830 },
       },
     },

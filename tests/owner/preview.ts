@@ -10,7 +10,10 @@ import { readProofs } from "../../service/config.ts";
 import { publisher, fixture, rss, item, example } from "../feeds/publisher.ts";
 import { addNotebook, sourceOrigin, riverProof } from "../originals/source.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
-export async function ownerPreview(usePublicNetwork = false) {
+export async function ownerPreview(
+  usePublicNetwork = false,
+  readerDirectory = "dist",
+) {
   const directory = mkdtempSync(join(tmpdir(), "reading-box-owner-"));
   const publisherSite = await publisher();
   addNotebook(publisherSite);
@@ -37,7 +40,7 @@ export async function ownerPreview(usePublicNetwork = false) {
   const web = await preview({
     configFile: false,
     root: resolve("."),
-    build: { outDir: "dist" },
+    build: { outDir: readerDirectory },
     logLevel: "silent",
     preview: {
       host: "127.0.0.1",
@@ -82,6 +85,7 @@ export async function ownerPreview(usePublicNetwork = false) {
     port,
     url: "http://localhost:" + port,
     testSource,
+    publisher: publisherSite,
     start,
     stop,
     setNotebookPageStatus(status: 200 | 403 | 503) {
@@ -119,7 +123,11 @@ export async function ownerPreview(usePublicNetwork = false) {
         .get("local", url);
       if (!row) return undefined;
       const a = db.article("local", String(row.id));
-      return { coverage: a.coverage, reason: a.reason };
+      return {
+        coverage: a.coverage,
+        reason: a.reason,
+        pageCandidate: a.pageCandidate,
+      };
     },
     async publicEdition() {
       const id = db.find("local", debianReview.feed)!.id;

@@ -160,3 +160,117 @@ it("commits pages with the cursor, resumes after a failed page and keeps indepen
     await db.delete();
   }
 });
+
+it.each(["changes", "snapshot"] as const)(
+  "reconciles an unversioned M3 %s checkpoint once and resumes an interrupted replay",
+  async (phase) => {
+    const libraryId = crypto.randomUUID();
+    let db = new LiveLibrary(libraryId);
+    const carried = adaptDelivery(original);
+    delete carried.checkPage;
+    const second = { ...original, id: "other-article" };
+    const oldCheckpoint = {
+      id: "delivery" as const,
+      phase,
+      cursor: "m3-cursor",
+    };
+    const nextArticle = { ...original, pageCandidate: { url: original.url! } };
+    const calls: string[] = [];
+    let firstPageAvailable = false,
+      interrupt = true;
+    const client = {
+      async request<T>(path: string): Promise<T> {
+        calls.push(path);
+        if (path === "subscriptions") return { items: [] } as T;
+        if (!firstPageAvailable) throw Error("Offline");
+        if (path.startsWith("changes"))
+          return { items: [], nextCursor: "current", hasMore: false } as T;
+        if (!path.includes("cursor="))
+          return {
+            items: [nextArticle],
+            nextCursor: "page-two",
+            changesCursor: "baseline",
+          } as T;
+        if (interrupt) throw Error("Disconnected on page two");
+        expect(path).toContain("cursor=page-two");
+        return {
+          items: [
+            {
+              ...second,
+              withdrawn: true,
+              paragraphs: [],
+              revision: "withdrawn",
+            },
+          ],
+          nextCursor: null,
+          changesCursor: "baseline",
+        } as T;
+      },
+    };
+    try {
+      await db.deliver([
+        carried,
+        { ...carried, id: "rss-" + second.id, sourceKey: second.id },
+      ]);
+      await db.changeFlag(carried.id, "saved");
+      await db.changeFlag(carried.id, "archived");
+      await db.viewed(carried.id, "original", true);
+      await db.positions.put({ id: carried.id + "/original", top: 138 });
+      await db.checkpoint.put(oldCheckpoint);
+
+      await expect(collect(db, client)).rejects.toThrow("Offline");
+      expect(await db.checkpoint.get("delivery")).toEqual(oldCheckpoint);
+      expect(await db.articles.get(carried.id)).toEqual(carried);
+      firstPageAvailable = true;
+      calls.length = 0;
+      await expect(collect(db, client)).rejects.toThrow(
+        "Disconnected on page two",
+      );
+      expect(await db.articles.get(carried.id)).toMatchObject({
+        checkPage: true,
+        bodyHash: original.revision,
+        blocks: carried.blocks,
+      });
+      expect((await db.articles.get("rss-" + second.id))?.blocks).toEqual(
+        carried.blocks,
+      );
+      expect(await db.checkpoint.get("delivery")).toMatchObject({
+        phase: "snapshot",
+        cursor: "page-two",
+      });
+
+      db.close();
+      db = new LiveLibrary(libraryId);
+      interrupt = false;
+      await collect(db, client);
+      expect(await db.articles.get("rss-" + second.id)).toMatchObject({
+        coverage: "missing",
+        checkPage: false,
+        blocks: [],
+        permissions: { copy: false },
+      });
+      expect(await db.states.get(carried.id)).toMatchObject({
+        saved: true,
+        archived: true,
+        deepest: "original",
+        lastStage: "original",
+      });
+      expect((await db.positions.get(carried.id + "/original"))?.top).toBe(138);
+      expect(
+        calls.filter((p) => p.startsWith("articles") && !p.includes("cursor=")),
+      ).toHaveLength(1);
+      expect(calls.some((p) => p.includes("m3-cursor"))).toBe(false);
+
+      db.close();
+      db = new LiveLibrary(libraryId);
+      calls.length = 0;
+      await collect(db, client);
+      expect(calls).toEqual([
+        "subscriptions",
+        "changes?bodies=true&limit=24&cursor=current",
+      ]);
+    } finally {
+      await db.delete();
+    }
+  },
+);

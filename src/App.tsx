@@ -494,6 +494,7 @@ function Workspace({
               <Reader
                 key={current.a.id + "/" + (id ? stage : "preview")}
                 checkOriginal={feeds?.collector.checkOriginal}
+                offline={offline}
                 a={current.a}
                 state={current.s}
                 stage={id ? stage : undefined}

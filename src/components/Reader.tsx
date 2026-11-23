@@ -37,6 +37,7 @@ import { ManualCopy } from "./Dialogs";
 
 interface Props {
   a: Article;
+  offline: boolean;
   checkOriginal?: (id: string) => Promise<OriginalCheck | undefined>;
   state: ReadingState;
   stage?: Stage;
@@ -58,6 +59,7 @@ export function DepthMark({ n }: { n: number }) {
 }
 export function Reader({
   a: current,
+  offline,
   checkOriginal,
   state,
   stage,
@@ -102,8 +104,7 @@ export function Reader({
   >();
   const [pageAttempt, retryPage] = useState(0);
   useEffect(() => {
-    if (!original || !current.checkPage || !checkOriginal || !navigator.onLine)
-      return;
+    if (!original || !current.checkPage || !checkOriginal || offline) return;
     let visible = true;
     setPageCheck("checking");
     void checkOriginal(current.sourceKey).then(
@@ -122,6 +123,7 @@ export function Reader({
     };
   }, [
     original,
+    offline,
     current.checkPage,
     current.sourceKey,
     checkOriginal,
@@ -487,7 +489,7 @@ export function Reader({
                         : "AI summary · Demo"}
                   </span>
                 </div>
-                {original && current.checkPage && pageCheck && (
+                {original && current.checkPage && !offline && pageCheck && (
                   <div className="page-status">
                     <span role="status">
                       {pageCheck === "checking" ? (

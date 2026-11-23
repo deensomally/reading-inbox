@@ -21,10 +21,14 @@ export interface ChangeRequest {
   value: string;
   error?: string;
 }
+// M3 checkpoints have no format. Their cursor can cover deliveries whose
+// publisher-page fields the old reader did not store.
+const articleFormat = 2;
 interface Checkpoint {
   id: "delivery";
   phase: "snapshot" | "changes";
   cursor: string | null;
+  articleFormat?: number;
 }
 export interface Delivery {
   id: string;
@@ -135,11 +139,12 @@ export class LiveLibrary extends Library {
         const current = await this.checkpoint.get("delivery");
         if (
           current?.phase !== previous?.phase ||
-          current?.cursor !== previous?.cursor
+          current?.cursor !== previous?.cursor ||
+          current?.articleFormat !== previous?.articleFormat
         )
           return false;
         await this.deliver(items.map(adaptDelivery));
-        await this.checkpoint.put(next);
+        await this.checkpoint.put({ ...next, articleFormat });
         return true;
       },
     );
@@ -214,11 +219,14 @@ export async function collect(library: LiveLibrary, client: Client) {
     let reset = false;
     while (true) {
       const prior = await library.checkpoint.get("delivery");
+      // Replay authoritative, body-bearing snapshot pages once for an older
+      // format. Keep the prior records and cursor until a page commits.
+      const resume = prior?.articleFormat === articleFormat ? prior : undefined;
       const query =
         "?bodies=true&limit=24" +
-        (prior?.cursor ? "&cursor=" + encodeURIComponent(prior.cursor) : "");
+        (resume?.cursor ? "&cursor=" + encodeURIComponent(resume.cursor) : "");
       try {
-        if (!prior || prior.phase === "snapshot") {
+        if (!resume || resume.phase === "snapshot") {
           const p = await client.request<Snapshot>("articles" + query);
           await library.applyPage(
             prior,
@@ -241,11 +249,17 @@ export async function collect(library: LiveLibrary, client: Client) {
       } catch (err) {
         if (
           !reset &&
+          resume?.cursor &&
           err instanceof ServiceError &&
           err.code === "invalid_cursor"
         ) {
           reset = true;
-          await library.checkpoint.delete("delivery");
+          // Another tab may already have recovered this cursor.
+          await library.applyPage(
+            prior,
+            { id: "delivery", phase: "snapshot", cursor: null },
+            [],
+          );
           continue;
         }
         throw err;

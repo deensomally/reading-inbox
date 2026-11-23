@@ -1,6 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { upgradePreview } from "../upgrade/preview";
+import { upgradePreview, subscriptionUpgradePreview } from "../upgrade/preview";
 import { verifyUpgrade } from "../upgrade/journey";
+
+import { verifySubscriptionUpgrade } from "../upgrade/subscriptions";
+
+test("upgrades a Milestone 3 subscription checkpoint offline and extracts the open Original on reconnect", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  const site = await subscriptionUpgradePreview();
+  try {
+    await verifySubscriptionUpgrade(page, site);
+  } finally {
+    await site.close();
+  }
+});
 
 test("upgrades a populated Phase 1 PWA in place and reopens its library after rollback", async ({
   context,
