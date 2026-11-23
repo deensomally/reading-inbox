@@ -90,11 +90,16 @@ export function Subscriptions({
   const subscriptions =
     useLiveQuery(() => library.subscriptions.toArray(), [library]) ?? [];
   const pending = useLiveQuery(() => library.outbox.toArray(), [library]) ?? [];
-  const verified = useLiveQuery(
-    () =>
-      library.articleList.filter((a) => a.title === debianReview.title).first(),
-    [library],
-  );
+  const verified = useLiveQuery(async () => {
+    const candidates = await library.articleList
+      .filter((a) => a.title === debianReview.title)
+      .primaryKeys();
+    const articles = await library.articles.bulkGet(candidates);
+    return articles.find(
+      (a) =>
+        a?.reviewedDebian && a.permissions.display && a.coverage === "complete",
+    );
+  }, [library]);
   async function work(fn: () => Promise<void>) {
     setError("");
     setWorking(true);
