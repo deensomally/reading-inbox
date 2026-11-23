@@ -17,6 +17,9 @@ test("pairs, reads and copies a verified edition, keeps it offline, and returns 
   try {
     await verifyReviewed(page, site, true);
     await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Saved", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
     await page.reload();
     await expect(page.locator(".original-body")).toBeVisible();

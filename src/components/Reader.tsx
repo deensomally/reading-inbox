@@ -170,7 +170,7 @@ export function Reader({
     await copy(url, "Publisher link");
   }
   async function copyBody() {
-    const latest = await db.articles.get(a.id);
+    const latest = live ? await db.articles.get(a.id) : a;
     if (
       !latest?.permissions.copy ||
       !latest.permissions.display ||

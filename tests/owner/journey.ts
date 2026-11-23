@@ -65,13 +65,12 @@ export async function verifyReviewed(
       });
     await page.getByRole("button", { name: "Copy full article text" }).click();
     await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toContain(text);
-    expect(
-      (await page.evaluate(() => navigator.clipboard.readText())).endsWith(
-        text,
-      ),
-    ).toBe(true);
+      .poll(async () =>
+        (await page.evaluate(() => navigator.clipboard.readText()))
+          .replaceAll("\r\n", "\n")
+          .endsWith(text),
+      )
+      .toBe(true);
   } else {
     // Exercise the real Android clipboard-denied fallback with the same copy action.
     await page.evaluate(() =>
