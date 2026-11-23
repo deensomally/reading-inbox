@@ -1,3 +1,4 @@
+import { PortableSubscriptions } from "./PortableSubscriptions";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { ExternalLink, Rss } from "lucide-react";
@@ -54,6 +55,11 @@ export function useCollector(library: LiveLibrary, session?: BrowserSession) {
       document.removeEventListener("visibilitychange", resume);
     };
   }, [session, sync]);
+  // A collection already in progress may have read its snapshot before the change.
+  const syncAfterChanges = useCallback(async () => {
+    if (active.current) await active.current;
+    await sync();
+  }, [sync]);
   const checkOriginal = useCallback(
     async (id: string) => {
       if (!session) return;
@@ -61,19 +67,26 @@ export function useCollector(library: LiveLibrary, session?: BrowserSession) {
         "articles/" + encodeURIComponent(id) + "/original",
         "POST",
       );
-      if (active.current) await active.current;
-      await sync();
+      await syncAfterChanges();
       return confirmed;
     },
-    [session, sync],
+    [session, syncAfterChanges],
   );
   async function queue(action: ChangeRequest["action"], value: string) {
     await library.outbox.add({ action, value });
-    // If a collection was already taking its snapshot, give this command its own turn.
-    if (active.current) await active.current;
-    await sync();
+    await syncAfterChanges();
   }
-  return { sync, queue, checkOriginal, status, busy, needsCode, feedback };
+  return {
+    session,
+    sync,
+    syncAfterChanges,
+    queue,
+    checkOriginal,
+    status,
+    busy,
+    needsCode,
+    feedback,
+  };
 }
 export type Collector = ReturnType<typeof useCollector>;
 function localTime(time: number) {
@@ -218,6 +231,12 @@ export function Subscriptions({
             >
               Open reviewed Debian article <ExternalLink />
             </button>
+          )}
+          {collector.session && (
+            <PortableSubscriptions
+              session={collector.session}
+              sync={collector.syncAfterChanges}
+            />
           )}
           <div className="feed-list">
             {subscriptions

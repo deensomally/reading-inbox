@@ -1,3 +1,4 @@
+import { verifyPortability } from "./opml/journey.ts";
 // Runs only against an explicitly supplied Android emulator running Chrome.
 import { _android as android, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -117,6 +118,19 @@ try {
   } finally {
     forward(owner.port, false);
     await owner.close();
+  }
+  const portable = await ownerPreview();
+  const portablePage = await context.newPage();
+  try {
+    forward(portable.port, true);
+    await verifyPortability(portablePage, portable, true);
+    console.log(
+      "Android OPML preview, import, retry and XML round-trip passed",
+    );
+  } finally {
+    await portablePage.close();
+    forward(portable.port, false);
+    await portable.close();
   }
   const upgraded = await subscriptionUpgradePreview();
   const subscriptionPage = await context.newPage();

@@ -4,6 +4,8 @@ A local-first reading PWA for Android and Windows. Phase 1 includes eight fictio
 
 The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
 
+Milestone 5 adds OPML 2.0 import previews, nested folders and active subscription exports. [Test portable subscriptions on Windows](docs/PORTABLE_SUBSCRIPTIONS.md)
+
 Milestone 4 adds on-demand, permission-checked publisher originals with structured text, licensed figures, offline copy and publisher handoffs. [Test faithful originals on Windows and Android](docs/FAITHFUL_ORIGINALS.md)
 
 Phase 2 milestone 1 upgrades an existing library in place. [Windows setup and upgrade walkthrough](docs/LOCAL_LIBRARY_UPGRADE.md)

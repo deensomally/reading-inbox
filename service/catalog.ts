@@ -1,3 +1,4 @@
+import type { Outline } from "../shared/opml.ts";
 import { originalText } from "../shared/original.ts";
 import type { PageEdition } from "./original-page.ts";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -146,7 +147,7 @@ export class Catalog {
           this.db.prepare("PRAGMA user_version").get()?.user_version,
         );
         if (version === 0) this.db.exec(schema);
-        else if (version !== 1 && version !== 2)
+        else if (version !== 1 && version !== 2 && version !== 3)
           throw new Error("Unsupported Reading Box service database version.");
         if (version < 2)
           this.db.exec(`
@@ -154,6 +155,12 @@ export class Catalog {
           CREATE TRIGGER clear_page AFTER UPDATE ON articles BEGIN DELETE FROM page_editions WHERE article_id=NEW.id; END;
           UPDATE feeds SET etag=NULL,modified=NULL;
           PRAGMA user_version=2;`);
+        if (version < 3)
+          this.db.exec(`
+          CREATE TABLE subscription_outlines (
+            feed_id TEXT NOT NULL REFERENCES feeds(id), folders TEXT NOT NULL, title TEXT NOT NULL, html_url TEXT,
+            PRIMARY KEY(feed_id,folders));
+          PRAGMA user_version=3;`);
       });
       this.key = Buffer.from(
         String(
@@ -285,17 +292,66 @@ export class Catalog {
       );
     }
   }
-  subscribe(owner: string, edition: Edition, now: number, jitter: number) {
+  hasOutline(feedId: string, folders: string[]) {
+    return !!this.one(
+      "SELECT 1 FROM subscription_outlines WHERE feed_id=? AND folders=?",
+      feedId,
+      JSON.stringify(folders),
+    );
+  }
+  private keepOutline(feedId: string, outline?: Outline) {
+    if (outline)
+      this.run(
+        "INSERT OR IGNORE INTO subscription_outlines VALUES(?,?,?,?)",
+        feedId,
+        JSON.stringify(outline.folders),
+        outline.title,
+        outline.htmlUrl ?? null,
+      );
+  }
+  exportOutlines(owner: string): Outline[] {
+    return this.all<{
+      xmlUrl: string;
+      title: string;
+      htmlUrl: string | null;
+      folders: string | null;
+    }>(
+      `SELECT f.url AS xmlUrl,coalesce(nullif(o.title,''),f.title) AS title,o.html_url AS htmlUrl,o.folders
+       FROM feeds f LEFT JOIN subscription_outlines o ON o.feed_id=f.id WHERE f.owner=? AND f.active=1 ORDER BY title,f.id,o.folders`,
+      owner,
+    ).map((row) => ({
+      xmlUrl: row.xmlUrl,
+      title: row.title,
+      folders: JSON.parse(row.folders ?? "[]"),
+      ...(row.htmlUrl && { htmlUrl: row.htmlUrl }),
+    }));
+  }
+  acceptKnown(owner: string, id: string, now: number, outline?: Outline) {
+    return this.transaction(() => {
+      const prior = this.get(owner, id);
+      const feed = prior.active ? prior : this.reactivate(owner, id, now);
+      this.keepOutline(id, outline);
+      return { ...feed, added: !prior.active };
+    });
+  }
+  subscribe(
+    owner: string,
+    edition: Edition,
+    now: number,
+    jitter: number,
+    outline?: Outline,
+  ) {
     return this.transaction(() => {
       const known = edition.aliases
         .map((url) => this.find(owner, url))
         .find(Boolean);
       if (known) {
         this.aliases(known, edition.aliases);
-        if (known.active) return known;
+        this.keepOutline(known.id, outline);
+        if (known.active) return { ...known, added: false };
         this.reactivate(owner, known.id, now);
         this.apply(known, edition, now, jitter);
-        return this.get(owner, known.id);
+        return { ...this.get(owner, known.id), added: true };
       }
       if (
         this.one<{ n: number }>(
@@ -319,7 +375,8 @@ export class Catalog {
       );
       const f = this.get(owner, id);
       this.apply(f, edition, now, jitter);
-      return this.get(owner, id);
+      this.keepOutline(id, outline);
+      return { ...this.get(owner, id), added: true };
     });
   }
   nextDue(now: number) {
