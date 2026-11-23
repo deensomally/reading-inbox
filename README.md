@@ -2,9 +2,11 @@
 
 A local-first reading PWA for Android and Windows. Phase 1 includes eight fictional articles and three deterministic summary depths. The fourth depth opens the original. Everything works without an account or an API key.
 
+The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
+
 Phase 2 milestone 1 upgrades an existing library in place. [Windows setup and upgrade walkthrough](docs/LOCAL_LIBRARY_UPGRADE.md)
 
-Phase 2 milestone 2 adds a local RSS, Atom and Substack collector. Try it from PowerShell while the reader continues to show the fictional library. **Keep the service running on an awake, connected PC to collect while the reader is closed.** [Start, stop and test the feed service on Windows](docs/DURABLE_FEED_SERVICE.md)
+Phase 2 milestone 2 adds a local RSS, Atom and Substack collector. Try it from PowerShell or through the Subscriptions inbox. **Keep the service running on an awake, connected PC to collect while the reader is closed.** [Start, stop and test the feed service on Windows](docs/DURABLE_FEED_SERVICE.md)
 
 ![Desktop reading desk with the Essence stage open](docs/preview/desktop.png)
 
@@ -51,7 +53,7 @@ On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-conn
 - Dexie stores the articles, independent saved/archive flags, reading depth, scroll offsets and generated summaries in IndexedDB. A source edit retains the article ID and flags. Successful summaries use a key containing the local reader scope, article, body hash, coverage, stage, model and prompt versions.
 - The mock reads authored responses from same-origin demo assets on demand. No article is submitted to an external model. Browser storage can be cleared or evicted. There is no account, remote sync, analytics or backup in this milestone.
 - All demo publishers and discussion destinations are fictional. The post and discussion links stay within the local demo. Browser sharing hands the selected publisher URL to the device share sheet or copies it. A localhost link resolves on the receiving device only if it is running the same demo.
-- The local service supports subscriptions and tracks observed articles in SQLite. Subscription controls in the reading interface belong to milestone 3. Extraction, search, additional filters, bulk operations and export come later. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
+- The local service supports subscriptions and tracks observed articles in SQLite. The Subscriptions inbox manages real publications separately from the fictional demo. Extraction, search, additional filters, bulk operations and export come later. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
 
 The approved Phase 2 plan describes the first real-feed preview at milestone 3 and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
 

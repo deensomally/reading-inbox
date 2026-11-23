@@ -87,8 +87,14 @@ test("ordinary first open, independent copy actions, save/archive and persisted 
   );
   await page.getByRole("button", { name: "Copy full article text" }).click();
   // Windows exposes its native CRLF separators on clipboard readback.
-  const copiedBody = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copiedBody.replaceAll("\r\n", "\n")).toBe(originalText);
+  await expect
+    .poll(async () =>
+      (await page.evaluate(() => navigator.clipboard.readText())).replaceAll(
+        "\r\n",
+        "\n",
+      ),
+    )
+    .toBe(originalText);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Archive", exact: true }).click();
   await page.getByRole("button", { name: "Back to list" }).click();

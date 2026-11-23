@@ -3,6 +3,9 @@ import { _android as android, expect } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { upgradePreview } from "./upgrade/preview.ts";
 import { verifyUpgrade } from "./upgrade/journey.ts";
+import { ownerPreview } from "./owner/preview.ts";
+import { verifyReviewed } from "./owner/journey.ts";
+import { publicReview } from "./owner/public-review.ts";
 const [device] = await android.devices();
 if (!device || !device.serial().startsWith("emulator-"))
   throw new Error(
@@ -82,6 +85,26 @@ try {
     adb("reverse", "--remove", port);
     await site.close();
   }
+  const owner = await ownerPreview();
+  const forward = (port: number, open: boolean) =>
+    open
+      ? adb("reverse", "tcp:" + port, "tcp:" + port)
+      : adb("reverse", "--remove", "tcp:" + port);
+  try {
+    forward(owner.port, true);
+    const live = await context.newPage();
+    try {
+      await verifyReviewed(live, owner, false);
+    } finally {
+      await live.close();
+    }
+    console.log("Android paired feed reader and full-text copy passed");
+  } finally {
+    forward(owner.port, false);
+    await owner.close();
+  }
+  if (process.env.READING_BOX_LIVE_REVIEW === "1")
+    await publicReview(context, "android", forward);
   await context.close();
 } finally {
   adb("shell", "am", "clear-debug-app");

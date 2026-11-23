@@ -206,6 +206,9 @@ export class Catalog {
   credential(owner: string) {
     return installationToken(this.key, owner);
   }
+  browserLibrary(owner: string) {
+    return this.sign("browser-library", owner);
+  }
   authenticate(token: string) {
     const match = /^([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{43})$/.exec(token);
     return match && this.equal(token, this.credential(match[1]))

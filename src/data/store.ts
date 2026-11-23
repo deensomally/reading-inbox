@@ -9,6 +9,8 @@ import {
   type ArticleListItem,
   type Stage,
   type SummaryStage,
+  type Collection,
+  belongs,
 } from "./model";
 export class Library extends Dexie {
   articles!: Table<Article, string>;
@@ -73,6 +75,47 @@ export class Library extends Dexie {
       .where("[library+newestFirst]")
       .between(["demo", Dexie.minKey], ["demo", Dexie.maxKey])
       .toArray();
+  }
+  async collectionPage(
+    library: ArticleListItem["library"],
+    collection: Collection,
+    limit: number,
+    chosen?: string,
+  ) {
+    return this.transaction("r", this.articleList, this.states, async () => {
+      const keys = await this.articleList
+        .where("[library+newestFirst]")
+        .between([library, Dexie.minKey], [library, Dexie.maxKey])
+        .primaryKeys();
+      const states = await this.states.bulkGet(keys);
+      const matching: string[] = [];
+      const byId = new Map<string, ReadingState>();
+      let unread = 0;
+      keys.forEach((id, i) => {
+        const s = states[i] ?? initialState(id);
+        byId.set(id, s);
+        if (belongs("Unread", s)) unread++;
+        if (belongs(collection, s)) matching.push(id);
+      });
+      const page = matching.slice(0, limit);
+      const selected = chosen ?? page[0];
+      const ids =
+        selected && byId.has(selected) && !page.includes(selected)
+          ? [...page, selected]
+          : page;
+      const records = await this.articleList.bulkGet(ids);
+      const rows = records.flatMap((a) =>
+        a ? [{ a, s: byId.get(a.id)! }] : [],
+      );
+      return {
+        collection,
+        chosen,
+        rows: rows.slice(0, page.length),
+        selected: rows.find((r) => r.a.id === selected),
+        total: matching.length,
+        unread,
+      };
+    });
   }
   async deliver(articles: Article[], { onlyMissing = false } = {}) {
     await this.transaction(

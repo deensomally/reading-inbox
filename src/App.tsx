@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
@@ -11,15 +11,14 @@ import {
   CircleDot,
   Inbox,
   Info,
+  Rss,
   LibraryBig,
   WifiOff,
 } from "lucide-react";
-import { db, seedLibrary } from "./data/store";
+import { Library, db, seedLibrary } from "./data/store";
 import {
-  belongs,
   collections,
   dateLabel,
-  initialState,
   status,
   type Collection,
   type Stage,
@@ -30,6 +29,14 @@ import { Reader } from "./components/Reader";
 import { Dialog } from "./components/Dialogs";
 import { ArticleBody } from "./components/ArticleBody";
 
+import { LiveLibrary } from "./data/live-library";
+import { connections, BrowserSession } from "./data/connection";
+import {
+  Subscriptions,
+  useCollector,
+  type Collector,
+} from "./components/Subscriptions";
+import { LibraryContext } from "./data/library-context";
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
   Inbox: ["Your inbox is clear", "Archived articles are available in Archive."],
@@ -70,6 +77,59 @@ function About({ onClose }: { onClose: () => void }) {
 }
 export default function App() {
   const hash = useHash();
+  let lastLive = false;
+  try {
+    lastLive = localStorage.getItem("reading-box.library") === "subscriptions";
+  } catch {
+    /* The demo also works with preferences disabled. */
+  }
+  return route(hash).live || (!hash && lastLive) ? (
+    <LiveWorkspace hash={hash} />
+  ) : (
+    <Workspace hash={hash} library={db} />
+  );
+}
+function LiveWorkspace({ hash }: { hash: string }) {
+  const pairing = useLiveQuery(
+    async () => (await connections.pairing.get("browser")) ?? null,
+    [],
+  );
+  const session = useMemo(
+    () => (pairing ? new BrowserSession(pairing) : undefined),
+    [pairing],
+  );
+  const library = useMemo(
+    () => new LiveLibrary(pairing?.libraryId ?? "unpaired"),
+    [pairing?.libraryId],
+  );
+  const collector = useCollector(library, session);
+  if (pairing === undefined)
+    return (
+      <main className="fallback" role="status">
+        Opening your subscriptions…
+      </main>
+    );
+  return (
+    <Workspace
+      key={library.name}
+      hash={hash}
+      library={library}
+      feeds={{ collector, library, paired: !!pairing }}
+    />
+  );
+}
+function Workspace({
+  hash,
+  library,
+  feeds,
+}: {
+  hash: string;
+  library: Library;
+  feeds?: { collector: Collector; library: LiveLibrary; paired: boolean };
+}) {
+  const live = !!feeds;
+  const [manage, setManage] = useState(false);
+  const [limit, setLimit] = useState(40);
   const { collection, id, stage, publisher, discussion } = route(hash);
   const [loaded, setLoaded] = useState(false);
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
@@ -84,8 +144,8 @@ export default function App() {
   const previous = useRef<string | undefined>(id);
   useEffect(() => {
     const blocked = () => setUpgradeBlocked(true);
-    db.on("blocked", blocked);
-    seedLibrary().then(
+    library.on("blocked", blocked);
+    (live ? library.open() : seedLibrary(library)).then(
       () => setLoaded(true),
       (e) =>
         setFailure(
@@ -96,41 +156,48 @@ export default function App() {
     window.addEventListener("online", online);
     window.addEventListener("offline", online);
     return () => {
-      db.on.blocked.unsubscribe(blocked);
+      library.on.blocked.unsubscribe(blocked);
       window.removeEventListener("online", online);
       window.removeEventListener("offline", online);
       clearTimeout(noticeTimer.current);
     };
-  }, []);
-  const articles = useLiveQuery(
-    async () => (loaded ? db.listDemoArticles() : undefined),
-    [loaded],
+  }, [library, live]);
+  const result = useLiveQuery(
+    () =>
+      loaded
+        ? library.collectionPage(
+            live ? "subscriptions" : "demo",
+            collection,
+            limit,
+            id,
+          )
+        : undefined,
+    [loaded, library, live, collection, limit, id],
   );
-  const states = useLiveQuery(
-    async () => (loaded ? db.states.toArray() : undefined),
-    [loaded],
-  );
-  const byId = new Map(states?.map((s) => [s.id, s]));
-  const rows = (articles ?? []).map((a) => ({
-    a,
-    s: byId.get(a.id) ?? initialState(a.id),
-  }));
-  const visible = rows.filter(({ s }) => belongs(collection, s));
-  const selected = id ? rows.find(({ a }) => a.id === id) : visible[0];
+  const page = result?.collection === collection ? result : undefined;
+  const visible = page?.rows ?? [];
+  const selected = id
+    ? page?.selected?.a.id === id
+      ? page.selected
+      : visible.find((row) => row.a.id === id)
+    : visible[0];
   const selectedId = selected?.a.id;
   const article = useLiveQuery(
-    () => (selectedId ? db.articles.get(selectedId) : undefined),
-    [selectedId],
+    () => (selectedId ? library.articles.get(selectedId) : undefined),
+    [library, selectedId],
   );
   const current =
     selected && article?.id === selected.a.id
       ? { a: article, s: selected.s }
       : undefined;
-  const ready = loaded && !!articles && !!states;
+  const ready = loaded && !!page;
   useLayoutEffect(() => {
+    if (!ready) return;
     if (ready && list.current && !id) {
       list.current.scrollTop =
-        Number(sessionStorage.getItem("list-" + collection)) || 0;
+        Number(
+          sessionStorage.getItem((live ? "feeds-list-" : "list-") + collection),
+        ) || 0;
       if (previous.current) {
         const target = document.getElementById(
           "row-" + (origin.current ?? previous.current),
@@ -139,7 +206,7 @@ export default function App() {
       }
     }
     previous.current = id;
-  }, [collection, id, ready]);
+  }, [collection, id, ready, live]);
   const pageTitle =
     (id && selected ? selected.a.title : collection) + " · Reading Box";
   useEffect(() => {
@@ -155,256 +222,325 @@ export default function App() {
       origin.current = articleId;
       if (list.current)
         sessionStorage.setItem(
-          "list-" + collection,
+          (live ? "feeds-list-" : "list-") + collection,
           String(list.current.scrollTop),
         );
     }
     navigate(
-      readerUrl(collection, articleId, s),
+      readerUrl(collection, articleId, s, live),
       !!id,
       !id || !!history.state?.fromList,
     );
   }
   function back() {
     if (history.state?.fromList) history.back();
-    else navigate(listUrl(collection), true);
+    else navigate(listUrl(collection, live), true);
   }
   const layoutReady = ready && !failure;
   return (
-    <div className={"app" + (id ? " reading" : "")}>
-      <header className="masthead">
-        <a className="brand" href="#/inbox">
-          <span className="brand-mark">
-            <BookOpenText />
-          </span>
-          Reading Box
-        </a>
-        {!publisher && (
-          <nav className="collections" aria-label="Collections">
-            {collections.map((c) => {
-              const Icon = icons[c];
-              return (
-                <a
-                  key={c}
-                  href={listUrl(c)}
-                  aria-current={collection === c ? "page" : undefined}
-                >
-                  <Icon />
-                  {c}
-                </a>
-              );
-            })}
-          </nav>
-        )}
-        <div className="edition">
-          <Appearance />
-          {offline && (
-            <span className="offline">
-              <WifiOff /> Offline
+    <LibraryContext.Provider value={library}>
+      <div className={"app" + (id ? " reading" : "")}>
+        <header className="masthead">
+          <a className="brand" href={listUrl("Inbox", live)}>
+            <span className="brand-mark">
+              <BookOpenText />
             </span>
+            Reading Box
+          </a>
+          {!publisher && (
+            <nav className="collections" aria-label="Collections">
+              {collections.map((c) => {
+                const Icon = icons[c];
+                return (
+                  <a
+                    key={c}
+                    href={listUrl(c, live)}
+                    aria-current={collection === c ? "page" : undefined}
+                  >
+                    <Icon />
+                    {c}
+                  </a>
+                );
+              })}
+            </nav>
           )}
-          <button
-            className="demo-badge"
-            onClick={() => setAbout(true)}
-            aria-label="About the fictional demo"
-          >
-            <span />
-            Fictional demo
-            <Info />
-          </button>
-        </div>
-      </header>
-      {!layoutReady ? (
-        <main className="fallback" role="status">
-          <BookOpen />
-          <h1>{failure ? "Library unavailable" : "Opening your library…"}</h1>
-          {!failure && upgradeBlocked && (
-            <p>
-              Close other Reading Box tabs and windows to finish updating your
-              library. This window will continue automatically.
-            </p>
-          )}
-          {failure && (
-            <>
-              <p>{failure}</p>
-              <button className="secondary" onClick={() => location.reload()}>
-                Try again
-              </button>
-            </>
-          )}
-        </main>
-      ) : publisher && current ? (
-        <main className="publisher-page">
-          <span className="section-label">
-            Demo publisher {discussion ? "discussion" : "page"}
-          </span>
-          <h1>{current.a.title}</h1>
-          <p className="byline">
-            {current.a.publication} ·{" "}
-            {current.a.author ?? "Publication edition"}
-          </p>
-          {discussion ? (
-            <p>
-              This is the fictional discussion destination for this article.
-            </p>
-          ) : (
-            <>
-              <ArticleBody a={current.a} />
-              {current.a.discussion && (
-                <a href={current.a.discussion}>View original comments</a>
-              )}
-            </>
-          )}
-          <p>
-            <a href="#/inbox">Return to Reading Box</a>
-          </p>
-        </main>
-      ) : (
-        <main className="layout">
-          <section
-            className="collection-panel"
-            aria-label={collection + " articles"}
-          >
-            <header className="list-heading">
-              <div className="section-label">
-                <LibraryBig /> Your library
-              </div>
-              <div className="list-title">
-                <h1 tabIndex={-1} ref={title}>
-                  {collection}
-                </h1>
-                <span className="count">{visible.length}</span>
-              </div>
-              <div className="list-meta">
-                <span>
-                  {collection === "Inbox"
-                    ? rows.filter(({ s }) => belongs("Unread", s)).length +
-                      " unread"
-                    : visible.length +
-                      " " +
-                      (visible.length === 1 ? "article" : "articles")}
-                </span>
-                <span>
-                  <ArrowDownWideNarrow /> Newest first
-                </span>
-              </div>
-            </header>
-            <div
-              className="list-scroll"
-              ref={list}
-              onScroll={(e) => {
-                if (!id)
-                  sessionStorage.setItem(
-                    "list-" + collection,
-                    String(e.currentTarget.scrollTop),
-                  );
-              }}
-            >
-              {visible.map(({ a, s }) => (
-                <div
-                  key={a.id}
-                  className={
-                    "article-row" + (a.id === current?.a.id ? " selected" : "")
+          <div className="edition">
+            <Appearance />
+            {offline && (
+              <span className="offline">
+                <WifiOff /> Offline
+              </span>
+            )}
+            {!publisher && (
+              <a
+                className="plain library-switch"
+                href={listUrl("Inbox", !live)}
+                onClick={() => {
+                  try {
+                    localStorage.setItem(
+                      "reading-box.library",
+                      live ? "demo" : "subscriptions",
+                    );
+                  } catch {
+                    /* Navigation still works. */
                   }
-                >
-                  <a
-                    className="row-link"
-                    id={"row-" + a.id}
-                    href={readerUrl(collection, a.id, s.lastStage ?? "essence")}
-                    onClick={(e) => {
-                      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                        return;
-                      e.preventDefault();
-                      open(a.id, s.lastStage ?? "essence");
-                    }}
+                }}
+              >
+                {live ? <BookOpen /> : <Rss />}
+                {live ? "Fictional demo" : "Subscriptions"}
+              </a>
+            )}
+            {!live && (
+              <button
+                className="demo-badge"
+                onClick={() => setAbout(true)}
+                aria-label="About the fictional demo"
+              >
+                <span />
+                Fictional demo
+                <Info />
+              </button>
+            )}
+          </div>
+        </header>
+        {!layoutReady ? (
+          <main className="fallback" role="status">
+            <BookOpen />
+            <h1>{failure ? "Library unavailable" : "Opening your library…"}</h1>
+            {!failure && upgradeBlocked && (
+              <p>
+                Close other Reading Box tabs and windows to finish updating your
+                library. This window will continue automatically.
+              </p>
+            )}
+            {failure && (
+              <>
+                <p>{failure}</p>
+                <button className="secondary" onClick={() => location.reload()}>
+                  Try again
+                </button>
+              </>
+            )}
+          </main>
+        ) : publisher && current ? (
+          <main className="publisher-page">
+            <span className="section-label">
+              Demo publisher {discussion ? "discussion" : "page"}
+            </span>
+            <h1>{current.a.title}</h1>
+            <p className="byline">
+              {current.a.publication} ·{" "}
+              {current.a.author ?? "Publication edition"}
+            </p>
+            {discussion ? (
+              <p>
+                This is the fictional discussion destination for this article.
+              </p>
+            ) : (
+              <>
+                <ArticleBody a={current.a} />
+                {current.a.discussion && (
+                  <a href={current.a.discussion}>View original comments</a>
+                )}
+              </>
+            )}
+            <p>
+              <a href="#/inbox">Return to Reading Box</a>
+            </p>
+          </main>
+        ) : (
+          <main className="layout">
+            <section
+              className="collection-panel"
+              aria-label={collection + " articles"}
+            >
+              <header className="list-heading">
+                <div className="section-label">
+                  <LibraryBig /> {live ? "Subscriptions" : "Your library"}
+                </div>
+                <div className="list-title">
+                  <h1 tabIndex={-1} ref={title}>
+                    {collection}
+                  </h1>
+                  <span className="count">{page?.total ?? 0}</span>
+                </div>
+                <div className="list-meta">
+                  <span>
+                    {collection === "Inbox"
+                      ? (page?.unread ?? 0) + " unread"
+                      : (page?.total ?? 0) +
+                        " " +
+                        (page?.total === 1 ? "article" : "articles")}
+                  </span>
+                  <span>
+                    <ArrowDownWideNarrow /> Newest first
+                  </span>
+                </div>
+                {feeds && (
+                  <div className="subscription-tools">
+                    <button
+                      className="text-action"
+                      onClick={() => setManage(true)}
+                    >
+                      <Rss />{" "}
+                      {feeds.paired
+                        ? "Manage subscriptions"
+                        : "Connect browser"}
+                    </button>
+                    {feeds.collector.status && (
+                      <p role="status">{feeds.collector.status}</p>
+                    )}
+                  </div>
+                )}
+              </header>
+              <div
+                className="list-scroll"
+                ref={list}
+                onScroll={(e) => {
+                  if (!id)
+                    sessionStorage.setItem(
+                      (live ? "feeds-list-" : "list-") + collection,
+                      String(e.currentTarget.scrollTop),
+                    );
+                }}
+              >
+                {visible.map(({ a, s }) => (
+                  <div
+                    key={a.id}
+                    className={
+                      "article-row" +
+                      (a.id === current?.a.id ? " selected" : "")
+                    }
                   >
-                    <div className="row-top">
-                      <span>{a.publication}</span>
-                      <time dateTime={a.published ?? a.received}>
-                        {dateLabel(a)}
-                      </time>
-                    </div>
-                    <h2>{a.title}</h2>
-                    <div className="row-bottom">
-                      {a.author && (
-                        <>
-                          <span>{a.author}</span>
-                          <i />
-                        </>
+                    <a
+                      className="row-link"
+                      id={"row-" + a.id}
+                      href={readerUrl(
+                        collection,
+                        a.id,
+                        s.lastStage ?? "essence",
+                        live,
                       )}
-                      <span className="read-state">
-                        {!s.opened && <b />}
-                        {status(s)}
-                      </span>
-                      {s.saved && <Bookmark aria-label="Saved" size={13} />}
-                    </div>
-                  </a>
-                  <a
-                    className="quick-original"
-                    aria-label={"Read original of " + a.title}
-                    title="Read original"
-                    href={readerUrl(collection, a.id, "original")}
-                    onClick={(e) => {
-                      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                        return;
-                      e.preventDefault();
-                      open(a.id, "original");
-                    }}
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
+                          return;
+                        e.preventDefault();
+                        open(a.id, s.lastStage ?? "essence");
+                      }}
+                    >
+                      <div className="row-top">
+                        <span>{a.publication}</span>
+                        <time dateTime={a.published ?? a.received}>
+                          {dateLabel(a)}
+                        </time>
+                      </div>
+                      <h2>{a.title}</h2>
+                      <div className="row-bottom">
+                        {a.author && (
+                          <>
+                            <span>{a.author}</span>
+                            <i />
+                          </>
+                        )}
+                        <span className="read-state">
+                          {!s.opened && <b />}
+                          {status(s)}
+                        </span>
+                        {s.saved && <Bookmark aria-label="Saved" size={13} />}
+                      </div>
+                    </a>
+                    <a
+                      className="quick-original"
+                      aria-label={"Read original of " + a.title}
+                      title="Read original"
+                      href={readerUrl(collection, a.id, "original", live)}
+                      onClick={(e) => {
+                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
+                          return;
+                        e.preventDefault();
+                        open(a.id, "original");
+                      }}
+                    >
+                      <BookOpen />
+                    </a>
+                  </div>
+                ))}
+                {(page?.total ?? 0) > visible.length && (
+                  <button
+                    className="secondary load-more"
+                    onClick={() => setLimit((n) => n + 40)}
                   >
-                    <BookOpen />
-                  </a>
-                </div>
-              ))}
-              {!visible.length && (
-                <div className="empty">
-                  <BookOpen />
-                  <h2>{empty[collection][0]}</h2>
-                  <p>{empty[collection][1]}</p>
-                </div>
-              )}
-            </div>
-          </section>
-          {current ? (
-            <Reader
-              key={current.a.id + "/" + (id ? stage : "preview")}
-              a={current.a}
-              state={current.s}
-              stage={id ? stage : undefined}
-              onBack={back}
-              onStage={(s) => open(current.a.id, s)}
-              notify={notify}
-            />
-          ) : (
-            <section className="desk empty-desk">
-              <BookOpen />
-              {selected ? (
-                <p role="status">Opening article…</p>
-              ) : id ? (
-                <>
-                  <h2>Article unavailable</h2>
-                  <button className="plain" onClick={back}>
-                    <ArrowLeft /> Back to list
+                    Show more articles
                   </button>
-                </>
-              ) : (
-                <>
-                  <h2>Reading desk</h2>
-                  <p>Articles from this collection open here.</p>
-                </>
-              )}
+                )}
+                {!visible.length && (
+                  <div className="empty">
+                    <BookOpen />
+                    <h2>
+                      {live && collection === "Inbox"
+                        ? "No articles in the inbox"
+                        : empty[collection][0]}
+                    </h2>
+                    <p>
+                      {live && collection === "Inbox"
+                        ? "Add a publication in Subscriptions to collect its articles."
+                        : empty[collection][1]}
+                    </p>
+                  </div>
+                )}
+              </div>
             </section>
-          )}
-        </main>
-      )}
-      <div className={"toast" + (message ? " visible" : "")} role="status">
-        {message && (
-          <>
-            <Check />
-            {message}
-          </>
+            {current ? (
+              <Reader
+                key={current.a.id + "/" + (id ? stage : "preview")}
+                a={current.a}
+                state={current.s}
+                stage={id ? stage : undefined}
+                onBack={back}
+                onStage={(s) => open(current.a.id, s)}
+                notify={notify}
+              />
+            ) : (
+              <section className="desk empty-desk">
+                <BookOpen />
+                {selected ? (
+                  <p role="status">Opening article…</p>
+                ) : id ? (
+                  <>
+                    <h2>Article unavailable</h2>
+                    <button className="plain" onClick={back}>
+                      <ArrowLeft /> Back to list
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h2>Reading desk</h2>
+                    <p>Articles from this collection open here.</p>
+                  </>
+                )}
+              </section>
+            )}
+          </main>
         )}
+        <div className={"toast" + (message ? " visible" : "")} role="status">
+          {message && (
+            <>
+              <Check />
+              {message}
+            </>
+          )}
+        </div>
+        {manage && feeds && (
+          <Subscriptions
+            library={feeds.library}
+            collector={feeds.collector}
+            paired={feeds.paired}
+            onClose={() => setManage(false)}
+            onOpen={(id) => open(id, "original")}
+          />
+        )}
+        {showAbout && <About onClose={() => setAbout(false)} />}
       </div>
-      {showAbout && <About onClose={() => setAbout(false)} />}
-    </div>
+    </LibraryContext.Provider>
   );
 }

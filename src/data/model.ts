@@ -21,6 +21,7 @@ export type Block =
       kind: "paragraph" | "heading" | "quote";
       text: string;
       link?: { text: string; href: string };
+      inlineLink?: { text: string; href: string };
     }
   | { kind: "list"; items: string[] }
   | { kind: "figure"; src: string; alt: string; caption: string };
@@ -41,7 +42,11 @@ export interface Fixture {
   discussion?: string;
   commentsDisabled?: boolean;
 }
-export interface Article extends Omit<Fixture, "delivery"> {
+export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
+  coverage: Fixture["coverage"] | "unverified";
+  library?: "subscriptions";
+  license?: string;
+  reviewedDebian?: boolean;
   source: "rss" | "newsletter";
   sourceKey: string;
   blocks: Block[];
@@ -57,7 +62,7 @@ export type ArticleListItem = Pick<
   Article,
   "id" | "title" | "publication" | "author" | "published" | "received"
 > & {
-  library: "demo";
+  library: "demo" | "subscriptions";
   newestFirst: number;
 };
 
@@ -78,6 +83,7 @@ export function articleListItem({
   author,
   published,
   received,
+  library,
 }: Article): ArticleListItem {
   // An ascending index keeps equal dates in the v1 order (article ID ascending).
   const { timestamp } = articleDate({ published, received });
@@ -88,7 +94,7 @@ export function articleListItem({
     author,
     published,
     received,
-    library: "demo",
+    library: library ?? "demo",
     // IndexedDB omits NaN index keys. Keep even an undated legacy row visible.
     newestFirst: Number.isFinite(timestamp)
       ? -timestamp

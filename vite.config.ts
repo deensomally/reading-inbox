@@ -4,7 +4,10 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:" + (process.env.READING_BOX_PORT || "4318"),
+      "/api": {
+        target: "http://127.0.0.1:" + (process.env.READING_BOX_PORT || "4318"),
+        changeOrigin: false,
+      },
     },
   },
   plugins: [

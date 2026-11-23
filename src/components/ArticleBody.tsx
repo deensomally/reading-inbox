@@ -1,10 +1,12 @@
 import { ExternalLink, ChevronRight } from "lucide-react";
 import type { Article } from "../data/model";
-import { db } from "../data/store";
-export function handoff(a: Article) {
-  void db.states.update(a.id, { publisherOpened: true });
+import { useLibrary } from "../data/library-context";
+function useHandoff(a: Article) {
+  const db = useLibrary();
+  return () => void db.states.update(a.id, { publisherOpened: true });
 }
 export function PublisherLink({ a }: { a: Article }) {
+  const handoff = useHandoff(a);
   return (
     a.publisher && (
       <a
@@ -12,7 +14,7 @@ export function PublisherLink({ a }: { a: Article }) {
         href={a.publisher}
         target="_blank"
         rel="noreferrer"
-        onClick={() => handoff(a)}
+        onClick={handoff}
       >
         Open on publisher site <ExternalLink />
       </a>
@@ -20,6 +22,7 @@ export function PublisherLink({ a }: { a: Article }) {
   );
 }
 export function ArticleBody({ a }: { a: Article }) {
+  const handoff = useHandoff(a);
   if (!a.permissions.display)
     return <p>{a.reason ?? "The article text is unavailable."}</p>;
   return (
@@ -45,7 +48,19 @@ export function ArticleBody({ a }: { a: Article }) {
           return <blockquote key={i}>{b.text}</blockquote>;
         return (
           <p key={i}>
-            {b.text}
+            {b.inlineLink && b.text.includes(b.inlineLink.text) ? (
+              <>
+                {b.text.slice(0, b.text.indexOf(b.inlineLink.text))}
+                <a href={b.inlineLink.href} target="_blank" rel="noreferrer">
+                  {b.inlineLink.text}
+                </a>
+                {b.text.slice(
+                  b.text.indexOf(b.inlineLink.text) + b.inlineLink.text.length,
+                )}
+              </>
+            ) : (
+              b.text
+            )}
             {b.link && (
               <>
                 {" "}
@@ -53,7 +68,7 @@ export function ArticleBody({ a }: { a: Article }) {
                   href={b.link.href}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={() => handoff(a)}
+                  onClick={handoff}
                 >
                   {b.link.text}
                 </a>
@@ -66,6 +81,7 @@ export function ArticleBody({ a }: { a: Article }) {
   );
 }
 export function Discussion({ a }: { a: Article }) {
+  const handoff = useHandoff(a);
   if (a.coverage !== "complete" || !a.permissions.display) return null;
   return (
     <details className="discussion">
@@ -77,13 +93,17 @@ export function Discussion({ a }: { a: Article }) {
           <p>The publisher has disabled comments for this article.</p>
         ) : a.discussion ? (
           <>
-            <p>This fictional article has a demo discussion page.</p>
+            <p>
+              {a.library
+                ? "The publisher provides a discussion for this article."
+                : "This fictional article has a demo discussion page."}
+            </p>
             <a
               className="text-action"
               href={a.discussion}
               target="_blank"
               rel="noreferrer"
-              onClick={() => handoff(a)}
+              onClick={handoff}
             >
               View original comments <ExternalLink />
             </a>

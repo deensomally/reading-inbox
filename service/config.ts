@@ -4,6 +4,7 @@ import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { publicUrl } from "./network.ts";
 import { reviewKey } from "./parser.ts";
+import { debianReview } from "../shared/reviewed-article.ts";
 
 export function settings() {
   const directory = resolve(
@@ -36,7 +37,12 @@ export function settings() {
 
 export function readProofs(directory: string) {
   const path = join(directory, "verified-originals.json"),
-    proofs = new Map<string, string>();
+    proofs = new Map([
+      [
+        reviewKey(debianReview.feed, debianReview.article),
+        debianReview.textHash,
+      ],
+    ] as [string, string][]);
   if (!existsSync(path)) return proofs;
   const entries: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!Array.isArray(entries))

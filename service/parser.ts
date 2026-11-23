@@ -1,6 +1,7 @@
 import { SaxesParser } from "saxes";
 import { parse, parseFragment, type DefaultTreeAdapterMap } from "parse5";
 import { publicUrl } from "./network.ts";
+import { debianReview } from "../shared/reviewed-article.ts";
 import {
   digest,
   FeedError,
@@ -368,8 +369,47 @@ export function parseFeed(
     const comments = child(n, "comments");
     const itemLicense = licenseOf(n),
       license = itemLicense ?? inheritedLicense;
-    const permissionSource =
-      license && license !== "unreviewed"
+    let content = contentOf(
+      full,
+      summary,
+      license,
+      storeText,
+      url ? proofs.get(reviewKey(feedUrl, url)) : undefined,
+    );
+    const reviewed =
+      storeText &&
+      !license &&
+      feedUrl === debianReview.feed &&
+      url === debianReview.article &&
+      title === debianReview.title &&
+      author === debianReview.author &&
+      full?.attrs.type === "html" &&
+      !full.attrs.src &&
+      digest(value(full).replace(/\s+/g, " ").trim()) ===
+        debianReview.markupHash;
+    if (reviewed) {
+      const parts = paragraphs(htmlText(value(full))).map((p) =>
+        p.replace(/\s+/g, " ").trim(),
+      );
+      if (digest(parts.join("\n\n")) === debianReview.textHash)
+        content = {
+          coverage: "complete",
+          license: debianReview.license,
+          paragraphs: parts,
+          reason:
+            "All five paragraphs and both links match the reviewed publisher edition.",
+          permissions: {
+            display: true,
+            copy: true,
+            retain: true,
+            export: false,
+            summarise: false,
+          },
+        };
+    }
+    const permissionSource = reviewed
+      ? "entry"
+      : license && license !== "unreviewed"
         ? itemLicense
           ? "entry"
           : "feed"
@@ -397,13 +437,7 @@ export function parseFeed(
           value(full ?? summary),
         ]),
       ),
-      content: contentOf(
-        full,
-        summary,
-        license,
-        storeText,
-        url ? proofs.get(reviewKey(feedUrl, url)) : undefined,
-      ),
+      content,
     };
   });
   const ttl = Number(value(child(channel, "ttl"))) * 60000;
