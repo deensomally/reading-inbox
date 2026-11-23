@@ -1,7 +1,19 @@
 import { test, expect } from "@playwright/test";
 import { ownerPreview } from "../owner/preview";
-import { readNotebook } from "../originals/journey";
+import { readNotebook, readThroughOutage } from "../originals/journey";
 import { lastPassage } from "../originals/source";
+test("reads and copies a verified Original after a publisher outage and service restart, then retries", async ({
+  page,
+}) => {
+  test.slow();
+  const site = await ownerPreview();
+  try {
+    await readNotebook(page, site);
+    await readThroughOutage(page, site, "system");
+  } finally {
+    await site.close();
+  }
+});
 test("reads a formatted public page, copies from Essence and retains its licensed figure offline", async ({
   page,
   context,

@@ -1,5 +1,5 @@
 import { originalText } from "../shared/original.ts";
-import type { PageResult } from "./original-page.ts";
+import type { PageEdition } from "./original-page.ts";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   DatabaseSync,
@@ -732,8 +732,9 @@ export class Catalog {
     owner: string,
     id: string,
     revision: string,
-    result: PageResult,
+    result: PageEdition,
     now: number,
+    resourcesChecked = true,
   ) {
     return this.transaction(() => {
       const base = this.pageInput(owner, id);
@@ -763,7 +764,9 @@ export class Catalog {
       if (suppressBody)
         body = JSON.stringify({ document: null, paragraphs: [] });
       const { checked: previousCheck, ...baseline } = base;
-      void previousCheck;
+      // With a transient figure failure, publish any actual changes but keep
+      // the previous check time. Zero makes a first partial check retryable.
+      const checked = resourcesChecked ? now : (previousCheck ?? 0);
       const meta = {
         ...baseline,
         ...patch,
@@ -803,9 +806,10 @@ export class Catalog {
         id,
       );
       if (old && JSON.parse(old.metadata).revision === meta.revision) {
+        if (checked === previousCheck) return;
         this.run(
           "UPDATE page_editions SET checked=? WHERE article_id=?",
-          now,
+          checked,
           id,
         );
         return;
@@ -816,7 +820,7 @@ export class Catalog {
         id,
         metadata,
         body,
-        now,
+        checked,
       );
       this.run(
         "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",

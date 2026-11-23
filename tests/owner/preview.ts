@@ -84,6 +84,13 @@ export async function ownerPreview(usePublicNetwork = false) {
     testSource,
     start,
     stop,
+    setNotebookPageStatus(status: 200 | 403 | 503) {
+      if (status === 200) addNotebook(publisherSite);
+      else {
+        now += 60001; // Expire the last successful page check.
+        publisherSite.routes.set("/river", { status });
+      }
+    },
     async code() {
       const result = await service!.app.inject({
         method: "POST",

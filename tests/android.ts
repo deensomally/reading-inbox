@@ -5,7 +5,7 @@ import { upgradePreview } from "./upgrade/preview.ts";
 import { verifyUpgrade } from "./upgrade/journey.ts";
 import { ownerPreview } from "./owner/preview.ts";
 import { verifyReviewed } from "./owner/journey.ts";
-import { readNotebook } from "./originals/journey.ts";
+import { readNotebook, readThroughOutage } from "./originals/journey.ts";
 import { publicReview } from "./owner/public-review.ts";
 const [device] = await android.devices();
 if (!device || !device.serial().startsWith("emulator-"))
@@ -103,8 +103,9 @@ try {
     const rich = await context.newPage();
     try {
       await readNotebook(rich, owner, true);
+      await readThroughOutage(rich, owner, "manual");
       console.log(
-        "Android formatted Original, licensed offline image and article discussion passed",
+        "Android formatted Original, publisher outage, restart, manual copy, retry and restriction passed",
       );
     } finally {
       await rich.close();

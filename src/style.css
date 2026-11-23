@@ -1243,3 +1243,11 @@ textarea {
   font-family: "DM Sans", "Segoe UI", sans-serif;
   font-size: 0.9em;
 }
+.page-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--muted);
+}

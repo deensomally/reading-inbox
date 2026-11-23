@@ -208,10 +208,21 @@ export class Poller {
           reviewKey(feed.validator_url, input.pageCandidate.url),
         );
         const result = await extractPage(
-          { ...input, reviewedText },
+          { ...input, reviewedText, retained: this.catalog.article(owner, id) },
           this.download,
+          this.now,
         );
-        this.catalog.recordPage(owner, id, input.revision, result, this.now());
+        if (result.edition) {
+          this.catalog.recordPage(
+            owner,
+            id,
+            input.revision,
+            result.edition,
+            this.now(),
+            !result.issue,
+          );
+        }
+        return result.issue;
       }
     });
   }

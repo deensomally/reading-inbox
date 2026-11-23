@@ -26,14 +26,18 @@ import {
 import { requestSummary } from "../data/store";
 import { useLibrary } from "../data/library-context";
 import { ServiceError } from "../data/connection";
-import { originalText } from "../../shared/original";
+import {
+  originalText,
+  type OriginalCheck,
+  type PublisherCheckIssue,
+} from "../../shared/original";
 import { debianNotice, debianReview } from "../../shared/reviewed-article";
 import { ArticleBody, Discussion, PublisherLink } from "./ArticleBody";
 import { ManualCopy } from "./Dialogs";
 
 interface Props {
   a: Article;
-  checkOriginal?: (id: string) => Promise<string | undefined>;
+  checkOriginal?: (id: string) => Promise<OriginalCheck | undefined>;
   state: ReadingState;
   stage?: Stage;
   onStage: (s: Stage) => void;
@@ -93,27 +97,36 @@ export function Reader({
   const restored = useRef(false);
   const original = stage === "original";
   const allowed = a.permissions.display && a.coverage !== "missing";
-  const [pageMessage, setPageMessage] = useState("");
+  const [pageCheck, setPageCheck] = useState<
+    "checking" | PublisherCheckIssue
+  >();
+  const [pageAttempt, retryPage] = useState(0);
   useEffect(() => {
     if (!original || !current.checkPage || !checkOriginal || !navigator.onLine)
       return;
     let visible = true;
-    setPageMessage("Checking the publisher edition…");
+    setPageCheck("checking");
     void checkOriginal(current.sourceKey).then(
-      () => {
-        if (visible) setPageMessage("");
+      (result) => {
+        if (visible) setPageCheck(result?.issue);
       },
       () => {
         if (visible)
-          setPageMessage(
-            "Publisher check unavailable. Showing the locally retained edition.",
-          );
+          setPageCheck({
+            message: "The local service could not check the publisher.",
+          });
       },
     );
     return () => {
       visible = false;
     };
-  }, [original, current.checkPage, current.sourceKey, checkOriginal]);
+  }, [
+    original,
+    current.checkPage,
+    current.sourceKey,
+    checkOriginal,
+    pageAttempt,
+  ]);
   const ready = live || original || !allowed || !!result;
   const coverageLabel = a.subscriberOnly
     ? allowed
@@ -206,7 +219,9 @@ export function Reader({
     if (a.pageUrl && checkOriginal && navigator.onLine) {
       let revision: string | undefined;
       try {
-        revision = await checkOriginal(a.sourceKey);
+        const result = await checkOriginal(a.sourceKey);
+        revision = result?.revision;
+        setPageCheck(result?.issue);
       } catch (err) {
         if (!(err instanceof ServiceError && err.status === 0)) throw err;
       }
@@ -472,6 +487,34 @@ export function Reader({
                         : "AI summary · Demo"}
                   </span>
                 </div>
+                {original && current.checkPage && pageCheck && (
+                  <div className="page-status">
+                    <span role="status">
+                      {pageCheck === "checking" ? (
+                        "Checking the publisher edition…"
+                      ) : (
+                        <>
+                          {pageCheck.message}{" "}
+                          {a.pageUrl &&
+                            allowed &&
+                            "Showing the last retained publisher edition. "}
+                          {pageCheck.retryAt &&
+                            "Retry after " +
+                              new Date(pageCheck.retryAt).toLocaleString() +
+                              "."}
+                        </>
+                      )}
+                    </span>
+                    {pageCheck !== "checking" && (
+                      <button
+                        className="text-action"
+                        onClick={() => retryPage((n) => n + 1)}
+                      >
+                        Retry publisher check <RotateCcw />
+                      </button>
+                    )}
+                  </div>
+                )}
                 {a.coverage === "excerpt" && (
                   <p className="notice">
                     <strong>Excerpt only.</strong> {a.reason}
@@ -567,11 +610,6 @@ export function Reader({
                   </p>
                 )}
               </section>
-              {original && pageMessage && (
-                <p role="status" className="page-status">
-                  {pageMessage}
-                </p>
-              )}
               <div className="reading-actions">
                 {!original && !live && (
                   <button

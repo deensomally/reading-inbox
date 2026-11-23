@@ -58,6 +58,14 @@ export interface OriginalDocument {
   nodes: OriginalNode[];
   limitations: string[];
 }
+export interface PublisherCheckIssue {
+  message: string;
+  retryAt?: number;
+}
+export interface OriginalCheck {
+  revision: string;
+  issue?: PublisherCheckIssue;
+}
 // Build paragraphs rather than normalising the finished text. Whitespace inside a
 // preformatted passage is part of the publisher's edition.
 export function originalText(nodes: OriginalNode[]): string {

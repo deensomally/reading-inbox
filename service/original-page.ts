@@ -4,6 +4,7 @@ import {
   originalText,
   type OriginalDocument,
   type OriginalNode,
+  type PublisherCheckIssue,
 } from "../shared/original.ts";
 import { debianReview } from "../shared/reviewed-article.ts";
 import {
@@ -18,7 +19,13 @@ import {
 } from "./structure.ts";
 import { ccBy, type PageCandidate } from "./page-policy.ts";
 import { decodeDocument } from "./parser.ts";
-import { digest, FeedError, type Download } from "./types.ts";
+import {
+  digest,
+  FeedError,
+  publisherError,
+  type Download,
+  type DocumentResponse,
+} from "./types.ts";
 
 export interface PageInput {
   pageCandidate: PageCandidate;
@@ -26,8 +33,13 @@ export interface PageInput {
   title: string;
   author: string | null;
   license: string | null;
+  retained?: {
+    pageUrl?: string;
+    license?: string;
+    document?: OriginalDocument;
+  };
 }
-export interface PageResult {
+export interface PageEdition {
   document?: OriginalDocument;
   coverage?: "complete" | "unverified";
   license?: string;
@@ -36,7 +48,44 @@ export interface PageResult {
   commentsDisabled?: boolean;
   discussion?: string;
 }
-const blocked = (reason: string): PageResult => ({ reason });
+type PageCheck =
+  | { edition: PageEdition; issue?: PublisherCheckIssue }
+  | { edition?: never; issue: PublisherCheckIssue };
+const blocked = (reason: string): PageEdition => ({ reason });
+const temporaryStatus = (status: number) =>
+  status === 408 ||
+  status === 425 ||
+  status === 429 ||
+  (status >= 500 && status < 600);
+
+// The downloader can return a publisher status or throw it (robots checks and
+// rate limits). Only a response about the resource can change a retained edition.
+async function retrieve(
+  url: string,
+  purpose: "page" | "image",
+  download: Download,
+  now: () => number,
+): Promise<DocumentResponse | { issue: PublisherCheckIssue }> {
+  try {
+    const res = await download(url, undefined, purpose);
+    if (temporaryStatus(res.status))
+      throw publisherError(res.status, res.headers, now());
+    return res;
+  } catch (err) {
+    if (!(err instanceof FeedError))
+      return { issue: { message: "Could not reach the publisher." } };
+    const publisherStatus =
+      err.code.startsWith("http_") &&
+      temporaryStatus(Number(err.code.slice(5)));
+    if (
+      err.code !== "timeout" &&
+      err.code !== "unreachable" &&
+      !publisherStatus
+    )
+      throw err;
+    return { issue: { message: err.message, retryAt: err.retryAt } };
+  }
+}
 const single = <T>(items: T[]) => (items.length === 1 ? items[0] : undefined);
 const words = (e: HtmlNode): string =>
   "value" in e
@@ -234,6 +283,8 @@ async function includeImages(
   url: string,
   license: string,
   download: Download,
+  now: () => number,
+  retained?: OriginalDocument,
 ) {
   const licensed = new Set(
     source
@@ -242,6 +293,7 @@ async function includeImages(
       .map((e) => safeLink(attr(e, "src"), url)),
   );
   let requests = 0;
+  let issue: PublisherCheckIssue | undefined;
   for (const img of images(doc.nodes)) {
     const href = img.href;
     if (
@@ -251,18 +303,33 @@ async function includeImages(
       ++requests <= 3
     ) {
       try {
-        const res = await download(href, undefined, "image");
-        const b = Buffer.from(res.bytes);
-        if (
-          res.status === 200 &&
-          res.url === href &&
-          !noArchive.test(res.headers.get("cache-control") ?? "") &&
-          !noArchive.test(res.headers.get("x-robots-tag") ?? "") &&
-          res.headers.get("content-type")?.split(";")[0] === "image/png" &&
-          readablePng(b)
-        ) {
-          img.image = "data:image/png;base64," + b.toString("base64");
-          continue;
+        const res = await retrieve(href, "image", download, now);
+        if ("issue" in res) {
+          issue = {
+            ...res.issue,
+            message: "Figure check unavailable. " + res.issue.message,
+          };
+          // Today's page still explicitly licenses this exact resource.
+          const cached =
+            retained &&
+            images(retained.nodes).find((n) => n.href === href && n.image);
+          if (cached) {
+            img.image = cached.image;
+            continue;
+          }
+        } else {
+          const b = Buffer.from(res.bytes);
+          if (
+            res.status === 200 &&
+            res.url === href &&
+            !noArchive.test(res.headers.get("cache-control") ?? "") &&
+            !noArchive.test(res.headers.get("x-robots-tag") ?? "") &&
+            res.headers.get("content-type")?.split(";")[0] === "image/png" &&
+            readablePng(b)
+          ) {
+            img.image = "data:image/png;base64," + b.toString("base64");
+            continue;
+          }
         }
       } catch {
         /* The caption and publisher handoff remain available. */
@@ -272,22 +339,27 @@ async function includeImages(
       "A figure is available at the publisher. Its image could not be retained.";
     if (!doc.limitations.includes(note)) doc.limitations.push(note);
   }
+  return issue;
 }
 export async function extractPage(
   input: PageInput,
   download: Download,
-): Promise<PageResult> {
+  now = Date.now,
+): Promise<PageCheck> {
   const { url } = input.pageCandidate;
   try {
-    const response = await download(url, undefined, "page");
+    const response = await retrieve(url, "page", download, now);
+    if ("issue" in response) return response;
     if (
       response.status === 401 ||
       response.status === 402 ||
       response.status === 403
     )
-      return blocked(
-        "The publisher requires access or refused this request. Open the post there.",
-      );
+      return {
+        edition: blocked(
+          "The publisher requires access or refused this request. Open the post there.",
+        ),
+      };
     if (
       response.status !== 200 ||
       response.url !== url ||
@@ -295,13 +367,15 @@ export async function extractPage(
       noArchive.test(response.headers.get("cache-control") ?? "") ||
       noArchive.test(response.headers.get("x-robots-tag") ?? "")
     )
-      return blocked("This publisher page is unavailable for retention.");
+      return {
+        edition: blocked("This publisher page is unavailable for retention."),
+      };
     const html = decodeDocument(
       response.bytes,
       response.headers.get("content-type"),
     );
     const result = bounds(parse(html), input);
-    if (!("source" in result)) return result;
+    if (!("source" in result)) return { edition: result };
     const { source, license, inferred, all } = result;
     const semantic = source.flatMap(elements);
     const text = normal(source.map(words).join(" "));
@@ -314,17 +388,19 @@ export async function extractPage(
             license.replace(/\/$/, ""),
       )
     )
-      return blocked("The page contains conflicting reuse terms.");
+      return { edition: blocked("The page contains conflicting reuse terms.") };
     if (teaser.test(text))
       return {
-        reason:
-          "The publisher supplies a preview. Continue on the publisher site.",
-        subscriberOnly: /subscrib|sign in/i.test(text),
+        edition: {
+          reason:
+            "The publisher supplies a preview. Continue on the publisher site.",
+          subscriberOnly: /subscrib|sign in/i.test(text),
+        },
       };
     const document = structure(source, url);
     const plain = originalText(document.nodes);
     if (!plain || !semantic.some((e) => e.tagName === "p"))
-      return blocked(partial);
+      return { edition: blocked(partial) };
     if (
       input.pageCandidate.kind === "licensed" &&
       digest(plain) !== input.reviewedText &&
@@ -345,7 +421,18 @@ export async function extractPage(
       document.limitations.push(
         "The publisher did not mark the exact article body.",
       );
-    await includeImages(document, source, url, license, download);
+    const retained = input.retained;
+    const issue = await includeImages(
+      document,
+      source,
+      url,
+      license,
+      download,
+      now,
+      retained?.pageUrl === url && retained.license === license
+        ? retained.document
+        : undefined,
+    );
     const replies = all.find(
       (e) =>
         e.tagName === "link" &&
@@ -356,25 +443,30 @@ export async function extractPage(
         (!attr(e, "type") || attr(e, "type") === "text/html"),
     );
     return {
-      document,
-      license,
-      coverage: document.limitations.length ? "unverified" : "complete",
-      reason:
-        document.limitations.join(" ") ||
-        "The complete body and ending were verified on the permitted publisher page.",
-      discussion: replies ? safeLink(attr(replies, "href"), url) : undefined,
-      commentsDisabled:
-        all.some(
-          (e) =>
-            hasClass(e, "comments-closed") &&
-            /comments (?:are )?closed/i.test(words(e)),
-        ) || undefined,
+      issue,
+      edition: {
+        document,
+        license,
+        coverage: document.limitations.length ? "unverified" : "complete",
+        reason:
+          document.limitations.join(" ") ||
+          "The complete body and ending were verified on the permitted publisher page.",
+        discussion: replies ? safeLink(attr(replies, "href"), url) : undefined,
+        commentsDisabled:
+          all.some(
+            (e) =>
+              hasClass(e, "comments-closed") &&
+              /comments (?:are )?closed/i.test(words(e)),
+          ) || undefined,
+      },
     };
   } catch (err) {
-    return blocked(
-      err instanceof FeedError
-        ? err.message
-        : "The article could not be safely extracted.",
-    );
+    return {
+      edition: blocked(
+        err instanceof FeedError
+          ? err.message
+          : "The article could not be safely extracted.",
+      ),
+    };
   }
 }

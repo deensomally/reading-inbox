@@ -50,7 +50,14 @@ function read(
       ),
     };
   };
-  return { requests, extract: () => extractPage(input, download) };
+  return {
+    requests,
+    async extract() {
+      const check = await extractPage(input, download);
+      if (!check.edition) throw Error(check.issue.message);
+      return check.edition;
+    },
+  };
 }
 
 describe("faithful public originals", () => {

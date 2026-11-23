@@ -215,9 +215,10 @@ export function feedApp(
     },
   );
   app.post<{ Params: Id }>("/api/articles/:id/original", async (req) => {
-    await poller.original(req.installation, req.params.id);
+    const issue = await poller.original(req.installation, req.params.id);
     return {
       revision: catalog.article(req.installation, req.params.id).revision,
+      issue,
     };
   });
   app.get<{ Params: Id }>("/api/articles/:id", async (req) =>

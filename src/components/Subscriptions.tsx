@@ -5,6 +5,7 @@ import { Dialog } from "./Dialogs";
 import { BrowserSession, pairBrowser, ServiceError } from "../data/connection";
 import { collect, LiveLibrary, type ChangeRequest } from "../data/live-library";
 import { debianReview } from "../../shared/reviewed-article";
+import type { OriginalCheck } from "../../shared/original";
 export function useCollector(library: LiveLibrary, session?: BrowserSession) {
   const [status, setStatus] = useState(""),
     [busy, setBusy] = useState(false),
@@ -56,13 +57,13 @@ export function useCollector(library: LiveLibrary, session?: BrowserSession) {
   const checkOriginal = useCallback(
     async (id: string) => {
       if (!session) return;
-      const confirmed = await session.request<{ revision: string }>(
+      const confirmed = await session.request<OriginalCheck>(
         "articles/" + encodeURIComponent(id) + "/original",
         "POST",
       );
       if (active.current) await active.current;
       await sync();
-      return confirmed.revision;
+      return confirmed;
     },
     [session, sync],
   );
