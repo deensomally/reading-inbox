@@ -6,7 +6,7 @@ import { createDownloader } from "../../service/network.ts";
 import { digest } from "../../service/types.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
 import { ownerPreview } from "./preview.ts";
-import { ccStory } from "../../service/page-policy.ts";
+import { ccStory, debianDevelopers } from "../../service/page-policy.ts";
 import { addFeed } from "./journey.ts";
 import { verifyReviewed } from "./journey.ts";
 type Node = DefaultTreeAdapterMap["node"];
@@ -51,14 +51,31 @@ export async function publicReview(
       path: join("playwright-report/owner-preview", platform + ".png"),
     });
     await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(page).toHaveURL(/#\/subscriptions\/inbox$/);
     await page
       .getByRole("link", {
         name: /Read original of New Debian Developers and Maintainers \(September and October 2026\)/,
       })
       .click();
-    await expect(
-      page.getByRole("heading", { name: "Verified complete original" }),
-    ).toBeVisible({ timeout: 45000 });
+    await expect(page).toHaveURL(/\/original$/);
+    await expect
+      .poll(
+        async () => {
+          const stored = site.pageEvidence(debianDevelopers);
+          const headings = await page.locator(".desk h2").allTextContents();
+          return {
+            coverage: stored?.coverage,
+            reason: stored?.reason,
+            headings,
+          };
+        },
+        { timeout: 45000 },
+      )
+      .toMatchObject({
+        coverage: "complete",
+        headings: expect.arrayContaining(["Verified complete original"]),
+      });
+
     const body = page.locator(".original-body");
     await expect(body.locator("ul li")).toHaveCount(15);
     await expect(body.locator("p").last()).toHaveText("Congratulations!");
@@ -70,6 +87,7 @@ export async function publicReview(
       path: join("playwright-report/owner-preview", platform + "-original.png"),
     });
     await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(page).toHaveURL(/#\/subscriptions\/inbox$/);
     await addFeed(
       page,
       "https://creativecommons.org/feed/",

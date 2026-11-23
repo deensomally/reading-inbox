@@ -104,6 +104,16 @@ export async function ownerPreview(usePublicNetwork = false) {
     observed() {
       return db.articles("local", 100).items.map((a) => a.title as string);
     },
+    pageEvidence(url: string) {
+      const row = db.db
+        .prepare(
+          "SELECT a.id FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE f.owner=? AND json_extract(a.metadata,'$.url')=?",
+        )
+        .get("local", url);
+      if (!row) return undefined;
+      const a = db.article("local", String(row.id));
+      return { coverage: a.coverage, reason: a.reason };
+    },
     async publicEdition() {
       const id = db.find("local", debianReview.feed)!.id;
       const rows = db.db
