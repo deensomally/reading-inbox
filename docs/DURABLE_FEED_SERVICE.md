@@ -1,6 +1,6 @@
 # Run the durable feed service on Windows
 
-Milestone 2 lets you subscribe to public feeds, inspect the articles Reading Box has collected, and stop and restart collection on your own PC. Use the PowerShell commands below. The reading interface still shows your fictional library. Connecting real subscriptions to that interface is milestone 3.
+Milestone 2 lets you subscribe to public feeds, inspect the articles Reading Box has collected, and stop and restart collection on your own PC. Use the PowerShell commands below. The reading interface still shows your fictional library. For the milestone 3 browser interface, follow the [owner preview walkthrough](RSS_OWNER_PREVIEW.md).
 
 ## Start the service
 

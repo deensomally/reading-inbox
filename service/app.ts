@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { Catalog } from "./catalog.ts";
 import { Poller, type PollOptions } from "./poller.ts";
 import { FeedError } from "./types.ts";
+import { BrowserAccess } from "./browser-access.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -15,11 +16,15 @@ const paging = {
   properties: {
     limit: { type: "integer", minimum: 1, maximum: 100, default: 50 },
     cursor: { type: "string", minLength: 1, maxLength: 1200 },
+    bodies: { type: "boolean", default: false },
   },
 };
-type PageQuery = { limit: number; cursor?: string };
+type PageQuery = { limit: number; cursor?: string; bodies: boolean };
 type Id = { id: string };
-export function feedApp(catalog: Catalog, options: PollOptions = {}) {
+export function feedApp(
+  catalog: Catalog,
+  options: PollOptions & { readerPort?: number } = {},
+) {
   const app = Fastify({
     logger: false,
     bodyLimit: 8192,
@@ -28,6 +33,9 @@ export function feedApp(catalog: Catalog, options: PollOptions = {}) {
     ajv: { customOptions: { removeAdditional: false } },
   });
   const poller = new Poller(catalog, options);
+  const access = new BrowserAccess(catalog, options.now);
+  const readerPort =
+    options.readerPort ?? Number(process.env.READING_BOX_READER_PORT ?? 4173);
   app.decorateRequest("installation", "");
   app.addHook("onRequest", async (req, reply) => {
     reply
@@ -49,8 +57,42 @@ export function feedApp(catalog: Catalog, options: PollOptions = {}) {
         "A local, same-origin request is required.",
         403,
       );
+    const route = req.routeOptions.url;
+    const origin = "http://" + host;
+    const handshake =
+      route === "/api/browser/pair" ||
+      route === "/api/browser/challenge" ||
+      route === "/api/browser/login";
+    const session = req.headers.authorization?.match(
+      /^Session ([\w-]{43})$/,
+    )?.[1];
+    if (handshake || session) {
+      if (
+        new URL(origin).port !== String(readerPort) ||
+        req.headers["x-reading-box-client"] !== "1" ||
+        (req.headers["sec-fetch-site"] &&
+          req.headers["sec-fetch-site"] !== "same-origin") ||
+        (req.method !== "GET" && req.headers.origin !== origin)
+      )
+        throw new FeedError(
+          "forbidden",
+          "Open the reader on its configured loopback address.",
+          403,
+        );
+      if (handshake) {
+        access.rateLimit();
+        return;
+      }
+    }
+    const admin =
+      route === "/api/browser/codes" || route === "/api/browser/devices";
     const token = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1] ?? "";
-    const installation = catalog.authenticate(token);
+    const installation =
+      session && !admin
+        ? access.owner(session, origin)
+        : !session && !req.headers.origin && !req.headers["sec-fetch-site"]
+          ? catalog.authenticate(token)
+          : null;
     if (!installation)
       throw new FeedError(
         "unauthorized",
@@ -59,6 +101,49 @@ export function feedApp(catalog: Catalog, options: PollOptions = {}) {
       );
     req.installation = installation;
   });
+  const fields = (names: string[]) => ({
+    schema: {
+      body: {
+        type: "object",
+        additionalProperties: false,
+        required: names,
+        properties: Object.fromEntries(
+          names.map((k) => [
+            k,
+            { type: "string", minLength: 1, maxLength: 256 },
+          ]),
+        ),
+      },
+    },
+  });
+  app.post("/api/browser/codes", async (req) => access.code(req.installation));
+  app.delete("/api/browser/devices", async (req, reply) => {
+    access.revoke(req.installation);
+    return reply.code(204).send();
+  });
+  app.post<{ Body: { code: string; spki: string } }>(
+    "/api/browser/pair",
+    fields(["code", "spki"]),
+    async (req) =>
+      access.pair(req.body.code, req.body.spki, "http://" + req.headers.host),
+  );
+  app.post<{ Body: { deviceId: string } }>(
+    "/api/browser/challenge",
+    fields(["deviceId"]),
+    async (req) =>
+      access.challenge(req.body.deviceId, "http://" + req.headers.host),
+  );
+  app.post<{ Body: { deviceId: string; nonce: string; signature: string } }>(
+    "/api/browser/login",
+    fields(["deviceId", "nonce", "signature"]),
+    async (req) =>
+      access.login(
+        req.body.deviceId,
+        req.body.nonce,
+        req.body.signature,
+        "http://" + req.headers.host,
+      ),
+  );
   app.setErrorHandler((err, _, res) => {
     if (err instanceof FeedError) {
       if (err.retryAt)
@@ -112,8 +197,18 @@ export function feedApp(catalog: Catalog, options: PollOptions = {}) {
   app.get<{ Querystring: PageQuery }>(
     "/api/articles",
     { schema: { querystring: paging } },
-    async (req) =>
-      catalog.articles(req.installation, req.query.limit, req.query.cursor),
+    async (req) => {
+      const page = catalog.articles(
+        req.installation,
+        req.query.limit,
+        req.query.cursor,
+      );
+      if (req.query.bodies)
+        page.items = page.items.map((a) =>
+          catalog.article(req.installation, a.id),
+        );
+      return page;
+    },
   );
   app.get<{ Params: Id }>("/api/articles/:id", async (req) =>
     catalog.article(req.installation, req.params.id),
@@ -121,8 +216,17 @@ export function feedApp(catalog: Catalog, options: PollOptions = {}) {
   app.get<{ Querystring: PageQuery }>(
     "/api/changes",
     { schema: { querystring: paging } },
-    async (req) =>
-      catalog.changes(req.installation, req.query.limit, req.query.cursor),
+    async (req) => {
+      const page = catalog.changes(
+        req.installation,
+        req.query.limit,
+        req.query.cursor,
+      );
+      if (req.query.bodies)
+        for (const item of page.items)
+          item.article = catalog.article(req.installation, item.article.id);
+      return page;
+    },
   );
   app.addHook("onClose", async () => {
     await poller.stop();

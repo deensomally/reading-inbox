@@ -1,0 +1,247 @@
+import { type Table } from "dexie";
+import { debianReview } from "../../shared/reviewed-article";
+import { Library } from "./store";
+import type { Article } from "./model";
+import { ServiceError, type BrowserSession } from "./connection";
+export interface Subscription {
+  id: string;
+  title: string;
+  url: string;
+  active: boolean;
+  paused: boolean;
+  lastSuccess: number | null;
+  nextPoll: number | null;
+  retryAfter: number;
+  possibleGapSince: number | null;
+  error: string | null;
+}
+export interface ChangeRequest {
+  seq?: number;
+  action: "subscribe" | "unsubscribe" | "refresh";
+  value: string;
+  error?: string;
+}
+interface Checkpoint {
+  id: "delivery";
+  phase: "snapshot" | "changes";
+  cursor: string | null;
+}
+export interface Delivery {
+  id: string;
+  feedId: string;
+  title: string;
+  author: string | null;
+  publication: string;
+  published: string | null;
+  received: string;
+  url: string | null;
+  discussion: string | null;
+  coverage: Article["coverage"];
+  revision: string;
+  reason: string;
+  withdrawn: boolean;
+  paragraphs: string[];
+  license: string | null;
+  permissions: Article["permissions"];
+}
+export function adaptDelivery(d: Delivery): Article {
+  const display =
+    !d.withdrawn &&
+    d.permissions.display &&
+    d.permissions.retain &&
+    d.paragraphs.length > 0;
+  const reviewed =
+    d.url === debianReview.article &&
+    d.license === debianReview.license &&
+    d.coverage === "complete" &&
+    display;
+  const blocks = display
+    ? d.paragraphs.map((text, i) => {
+        const link = reviewed
+          ? debianReview.links.find((l) => l.paragraph === i)
+          : undefined;
+        return {
+          kind: "paragraph" as const,
+          text,
+          ...(link ? { inlineLink: { text: link.text, href: link.href } } : {}),
+        };
+      })
+    : [];
+  return {
+    id: "rss-" + d.id,
+    library: "subscriptions",
+    source: "rss",
+    sourceKey: d.id,
+    title: d.title,
+    publication: d.publication,
+    author: d.author ?? undefined,
+    published: d.published ?? undefined,
+    received: d.received,
+    publisher: d.url ?? undefined,
+    discussion: d.discussion ?? undefined,
+    coverage: d.withdrawn ? "missing" : d.coverage,
+    bodyHash: d.revision,
+    blocks,
+    reason: d.reason,
+    license: d.license ?? undefined,
+    reviewedDebian: reviewed,
+    permissions: {
+      display,
+      retain: display,
+      copy: display && d.permissions.copy,
+      summarise: false,
+    },
+  };
+}
+export class LiveLibrary extends Library {
+  subscriptions!: Table<Subscription, string>;
+  checkpoint!: Table<Checkpoint, string>;
+  outbox!: Table<ChangeRequest, number>;
+  constructor(id: string) {
+    super("reading-box-subscriptions-" + id);
+    this.version(3).stores({
+      subscriptions: "id",
+      checkpoint: "id",
+      outbox: "++seq",
+    });
+  }
+  async applyPage(
+    previous: Checkpoint | undefined,
+    next: Checkpoint,
+    items: Delivery[],
+  ) {
+    return this.transaction(
+      "rw",
+      [
+        this.articles,
+        this.articleList,
+        this.summaries,
+        this.states,
+        this.checkpoint,
+      ],
+      async () => {
+        const current = await this.checkpoint.get("delivery");
+        if (
+          current?.phase !== previous?.phase ||
+          current?.cursor !== previous?.cursor
+        )
+          return false;
+        await this.deliver(items.map(adaptDelivery));
+        await this.checkpoint.put(next);
+        return true;
+      },
+    );
+  }
+}
+interface Snapshot {
+  items: Delivery[];
+  nextCursor: string | null;
+  changesCursor: string;
+}
+interface Changes {
+  items: { article: Delivery }[];
+  nextCursor: string;
+  hasMore: boolean;
+}
+type Client = Pick<BrowserSession, "request">;
+export async function collect(library: LiveLibrary, client: Client) {
+  const run = async () => {
+    let feedback = "";
+    for (const op of await library.outbox.toArray()) {
+      if (op.error) continue;
+      try {
+        if (op.action === "subscribe") {
+          await client.request("subscriptions", "POST", { url: op.value });
+          feedback = "Subscription added.";
+        } else if (op.action === "unsubscribe") {
+          await client.request(
+            "subscriptions/" + encodeURIComponent(op.value),
+            "DELETE",
+          );
+          feedback =
+            "Subscription removed. Its observed articles are still available.";
+        } else {
+          const r = await client.request<{
+            status: string;
+            subscription: Subscription;
+          }>(
+            "subscriptions/" + encodeURIComponent(op.value) + "/refresh",
+            "POST",
+          );
+          feedback =
+            r.status === "cooldown"
+              ? "This feed can be checked again after " +
+                new Date(r.subscription.retryAfter).toLocaleString() +
+                "."
+              : r.status === "failed"
+                ? (r.subscription.error ?? "Refresh failed.")
+                : r.status === "not_modified"
+                  ? "The publisher has no changes."
+                  : "Feed checked.";
+        }
+        await library.outbox.delete(op.seq!);
+      } catch (err) {
+        if (
+          !(err instanceof ServiceError) ||
+          !err.status ||
+          err.status === 401 ||
+          err.status === 429 ||
+          err.status === 503
+        )
+          throw err;
+        await library.outbox.update(op.seq!, { error: err.message });
+      }
+    }
+    const subscriptions = await client.request<{ items: Subscription[] }>(
+      "subscriptions",
+    );
+    await library.transaction("rw", library.subscriptions, async () => {
+      await library.subscriptions.clear();
+      await library.subscriptions.bulkPut(subscriptions.items);
+    });
+    let reset = false;
+    while (true) {
+      const prior = await library.checkpoint.get("delivery");
+      const query =
+        "?bodies=true&limit=24" +
+        (prior?.cursor ? "&cursor=" + encodeURIComponent(prior.cursor) : "");
+      try {
+        if (!prior || prior.phase === "snapshot") {
+          const p = await client.request<Snapshot>("articles" + query);
+          await library.applyPage(
+            prior,
+            {
+              id: "delivery",
+              phase: p.nextCursor ? "snapshot" : "changes",
+              cursor: p.nextCursor ?? p.changesCursor,
+            },
+            p.items,
+          );
+        } else {
+          const p = await client.request<Changes>("changes" + query);
+          const applied = await library.applyPage(
+            prior,
+            { id: "delivery", phase: "changes", cursor: p.nextCursor },
+            p.items.map((i) => i.article),
+          );
+          if (applied && !p.hasMore) break;
+        }
+      } catch (err) {
+        if (
+          !reset &&
+          err instanceof ServiceError &&
+          err.code === "invalid_cursor"
+        ) {
+          reset = true;
+          await library.checkpoint.delete("delivery");
+          continue;
+        }
+        throw err;
+      }
+    }
+    return feedback;
+  };
+  return navigator.locks
+    ? navigator.locks.request(library.name + "/collect", run)
+    : run();
+}

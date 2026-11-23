@@ -9,3 +9,6 @@ PRODUCT_SPEC.md
 CODEX_START_HERE.md
 IMPLEMENTATION_PLAN.md
 LICENSE
+
+# Exact licensed publisher markup used for the independent edition check.
+tests/feeds/fixtures/debian-election-body.html

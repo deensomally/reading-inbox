@@ -3,7 +3,7 @@ import { settings } from "./config.ts";
 import { localCredential } from "./catalog.ts";
 
 const help =
-  "Commands: subscribe <public URL>, list, refresh <feed ID>, unsubscribe <feed ID>, articles [cursor], article <article ID>, changes [cursor].";
+  "Commands: pair [profile], revoke-browsers [profile], subscribe <public URL>, list, refresh <feed ID>, unsubscribe <feed ID>, articles [cursor], article <article ID>, changes [cursor].";
 async function main() {
   const [cmd, arg, ...extra] = process.argv.slice(2);
   if (!cmd || cmd === "help") {
@@ -20,6 +20,8 @@ async function main() {
       "articles",
       "article",
       "changes",
+      "pair",
+      "revoke-browsers",
     ].includes(cmd) ||
     (["subscribe", "refresh", "unsubscribe", "article"].includes(cmd) &&
       !arg) ||
@@ -31,12 +33,22 @@ async function main() {
     throw new Error("Start the service with npm run feeds:start first.");
   const token = localCredential(
     config.database,
-    process.env.READING_BOX_PROFILE ?? "local",
+    ((cmd === "pair" || cmd === "revoke-browsers") && arg
+      ? arg
+      : process.env.READING_BOX_PROFILE) ?? "local",
   );
   const root = "http://127.0.0.1:" + config.port + "/api/";
   let path = "subscriptions",
     method = "GET",
     body: string | undefined;
+  if (cmd === "pair") {
+    path = "browser/codes";
+    method = "POST";
+  }
+  if (cmd === "revoke-browsers") {
+    path = "browser/devices";
+    method = "DELETE";
+  }
   if (cmd === "subscribe") {
     method = "POST";
     body = JSON.stringify({ url: arg });
@@ -58,6 +70,10 @@ async function main() {
     redirect: "error",
   });
   if (res.status === 204) {
+    if (cmd === "revoke-browsers") {
+      console.log("Browser access for this profile has been revoked.");
+      return;
+    }
     console.log(
       "Unsubscribed. Previously observed articles are still available.",
     );
@@ -65,6 +81,13 @@ async function main() {
   }
   const result = await res.json();
   if (!res.ok) throw new Error(result.message ?? "Request failed.");
+  if (cmd === "pair") {
+    console.log(
+      "Enter this one-time code in Reading Box within five minutes:\n" +
+        result.code,
+    );
+    return;
+  }
   console.log(JSON.stringify(result, null, 2));
   if (result.status === "failed") process.exitCode = 1;
 }

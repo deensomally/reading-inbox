@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Bits from Debian</title><link href="https://bits.debian.org/" rel="alternate" /><link href="https://bits.debian.org/feeds/atom.xml" rel="self" /><id>https://bits.debian.org/</id><updated>2026-11-13T11:00:00+01:00</updated><subtitle>Blog from the Debian Project</subtitle><entry><title>Debian Project Leader election 2026 is over, Sruthi Chandran elected!</title><link href="https://bits.debian.org/2026/04/dpl-elections-2026.html" rel="alternate" /><published>2026-04-20T19:00:00+02:00</published><updated>2026-04-20T19:00:00+02:00</updated><author><name>Jean-Pierre Giraud</name></author><id>tag:bits.debian.org,2026-04-20:/2026/04/dpl-elections-2026.html</id><content type="html">&lt;p&gt;The voting period and tally of votes for the Debian Project Leader election
+has just concluded, and the winner is Sruthi Chandran. Congratulations!&lt;/p&gt;
+&lt;p&gt;347 out of 1,039 Developers voted using the
+&lt;a href="https://en.wikipedia.org/wiki/Condorcet_method"&gt;Condorcet method&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;More information about the results of the voting is available on the
+&lt;a href="https://www.debian.org/vote/2026/vote_001"&gt;Debian Project Leader Elections 2026&lt;/a&gt;
+page.&lt;/p&gt;
+&lt;p&gt;Many thanks to Sruthi Chandran for her campaign, to our Developers for their
+votes, and to Andreas Tille for his service as DPL over the past two years!&lt;/p&gt;
+&lt;p&gt;The new term for the project leader will start on April 21, 2026 and expire
+on April 20, 2027.&lt;/p&gt;</content><category term="project" /><category term="dpl" /><category term="election" /><category term="leader" /><category term="vote" /></entry></feed>

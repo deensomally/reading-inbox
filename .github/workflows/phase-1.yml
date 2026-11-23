@@ -40,6 +40,14 @@ jobs:
         if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
         continue-on-error: true # The deterministic publisher tests above are required on every PR.
         run: npm run test:feeds:live
+      - name: Verify the live licensed article in the Windows reader
+        if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
+        run: node tests/owner/windows.ts
+      - if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-owner-preview
+          path: playwright-report/owner-preview
       - if: matrix.channel == 'chrome'
         uses: actions/upload-artifact@v4
         with:
@@ -67,9 +75,16 @@ jobs:
           curl --retry 15 --retry-delay 1 --retry-connrefused --fail http://127.0.0.1:4173/
       - name: Test Chrome on Android
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          READING_BOX_LIVE_REVIEW: ${{ contains(github.event.pull_request.body, '[public-feed-smoke]') && '1' || '0' }}
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_6
           script: node tests/android.ts
+      - if: contains(github.event.pull_request.body, '[public-feed-smoke]')
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-owner-preview
+          path: playwright-report/owner-preview
