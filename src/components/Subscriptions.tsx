@@ -53,13 +53,26 @@ export function useCollector(library: LiveLibrary, session?: BrowserSession) {
       document.removeEventListener("visibilitychange", resume);
     };
   }, [session, sync]);
+  const checkOriginal = useCallback(
+    async (id: string) => {
+      if (!session) return;
+      const confirmed = await session.request<{ revision: string }>(
+        "articles/" + encodeURIComponent(id) + "/original",
+        "POST",
+      );
+      if (active.current) await active.current;
+      await sync();
+      return confirmed.revision;
+    },
+    [session, sync],
+  );
   async function queue(action: ChangeRequest["action"], value: string) {
     await library.outbox.add({ action, value });
     // If a collection was already taking its snapshot, give this command its own turn.
     if (active.current) await active.current;
     await sync();
   }
-  return { sync, queue, status, busy, needsCode, feedback };
+  return { sync, queue, checkOriginal, status, busy, needsCode, feedback };
 }
 export type Collector = ReturnType<typeof useCollector>;
 function localTime(time: number) {

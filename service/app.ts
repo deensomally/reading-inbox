@@ -32,6 +32,10 @@ export function feedApp(
     trustProxy: false,
     ajv: { customOptions: { removeAdditional: false } },
   });
+  catalog.setPagePolicy(
+    options.pageOrigins ?? new Set(),
+    options.proofs ?? new Map(),
+  );
   const poller = new Poller(catalog, options);
   const access = new BrowserAccess(catalog, options.now);
   const readerPort =
@@ -210,6 +214,12 @@ export function feedApp(
       return page;
     },
   );
+  app.post<{ Params: Id }>("/api/articles/:id/original", async (req) => {
+    await poller.original(req.installation, req.params.id);
+    return {
+      revision: catalog.article(req.installation, req.params.id).revision,
+    };
+  });
   app.get<{ Params: Id }>("/api/articles/:id", async (req) =>
     catalog.article(req.installation, req.params.id),
   );

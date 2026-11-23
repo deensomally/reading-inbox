@@ -8,10 +8,12 @@ import { Catalog, INTERVAL } from "../../service/catalog.ts";
 import { feedApp } from "../../service/app.ts";
 import { readProofs } from "../../service/config.ts";
 import { publisher, fixture, rss, item, example } from "../feeds/publisher.ts";
+import { addNotebook, sourceOrigin, riverProof } from "../originals/source.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
 export async function ownerPreview(usePublicNetwork = false) {
   const directory = mkdtempSync(join(tmpdir(), "reading-box-owner-"));
   const publisherSite = await publisher();
+  addNotebook(publisherSite);
   const testSource = example.replace("/feed", "/journal");
   publisherSite.routes.set("/journal", {
     body: rss(
@@ -59,6 +61,8 @@ export async function ownerPreview(usePublicNetwork = false) {
       readerPort: port,
       proofs,
       ...(!usePublicNetwork && {
+        proofs: new Map([...proofs, riverProof]),
+        pageOrigins: new Set([sourceOrigin]),
         now: () => now,
         jitter: () => 0,
         download: publisherSite.download,

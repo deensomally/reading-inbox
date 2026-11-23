@@ -16,6 +16,9 @@ export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export interface FeedContent {
+  document?: import("../shared/original.ts").OriginalDocument;
+  pageCandidate?: import("./page-policy.ts").PageCandidate;
+  subscriberOnly?: boolean;
   coverage: "complete" | "excerpt" | "unverified" | "missing";
   reason: string;
   paragraphs: string[];
@@ -44,6 +47,7 @@ export interface Entry {
   content: FeedContent;
 }
 export interface ParsedFeed {
+  pageRestriction?: boolean;
   title: string;
   license: string | null;
   ttl: number;
@@ -66,6 +70,7 @@ export interface Validators {
 export type Download = (
   url: string,
   validators?: Validators,
+  purpose?: "page" | "image",
 ) => Promise<DocumentResponse>;
 
 export function retryAfter(value: string | null, now: number) {

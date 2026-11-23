@@ -40,6 +40,12 @@ export interface Delivery {
   revision: string;
   reason: string;
   withdrawn: boolean;
+  pageCandidate?: { url: string };
+  pageUrl?: string;
+  pageCheckedAt?: number;
+  document?: Article["document"];
+  commentsDisabled?: boolean;
+  subscriberOnly?: boolean;
   paragraphs: string[];
   license: string | null;
   permissions: Article["permissions"];
@@ -85,6 +91,12 @@ export function adaptDelivery(d: Delivery): Article {
     reason: d.reason,
     license: d.license ?? undefined,
     reviewedDebian: reviewed,
+    document: display ? d.document : undefined,
+    pageUrl: d.pageUrl,
+    pageCheckedAt: d.pageCheckedAt,
+    checkPage: !!d.pageCandidate && !d.withdrawn,
+    commentsDisabled: d.commentsDisabled,
+    subscriberOnly: d.subscriberOnly,
     permissions: {
       display,
       retain: display,

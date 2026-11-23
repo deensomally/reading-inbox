@@ -1,3 +1,5 @@
+import { originalText } from "../shared/original.ts";
+import type { PageResult } from "./original-page.ts";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   DatabaseSync,
@@ -144,8 +146,14 @@ export class Catalog {
           this.db.prepare("PRAGMA user_version").get()?.user_version,
         );
         if (version === 0) this.db.exec(schema);
-        else if (version !== 1)
+        else if (version !== 1 && version !== 2)
           throw new Error("Unsupported Reading Box service database version.");
+        if (version < 2)
+          this.db.exec(`
+          CREATE TABLE page_editions(article_id TEXT PRIMARY KEY REFERENCES articles(id), metadata TEXT NOT NULL, body TEXT, checked INTEGER NOT NULL);
+          CREATE TRIGGER clear_page AFTER UPDATE ON articles BEGIN DELETE FROM page_editions WHERE article_id=NEW.id; END;
+          UPDATE feeds SET etag=NULL,modified=NULL;
+          PRAGMA user_version=2;`);
       });
       this.key = Buffer.from(
         String(
@@ -388,16 +396,23 @@ export class Catalog {
     this.aliases(f, edition.aliases);
     if (edition.noStore) {
       for (const row of this.all<StoredArticle>(
-        "SELECT * FROM articles WHERE feed_id=? AND body_bytes>0",
+        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
         f.id,
       )) {
         this.restrictContent(row, f.id, "no_store");
       }
     }
     if (edition.parsed) {
+      if (edition.parsed.pageRestriction) {
+        for (const row of this.all<StoredArticle>(
+          "SELECT * FROM articles WHERE feed_id=? AND json_extract(metadata,'$.pageCandidate') IS NOT NULL",
+          f.id,
+        ))
+          this.restrictContent(row, f.id, "license");
+      }
       // Feed-level rights also apply to articles that have rolled out of its window.
       const affected = this.all<StoredArticle>(
-        "SELECT * FROM articles WHERE feed_id=? AND body_bytes>0 AND json_extract(metadata,'$.permissionSource')='feed' AND json_extract(metadata,'$.license') IS NOT ?",
+        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL) AND json_extract(metadata,'$.permissionSource')='feed' AND json_extract(metadata,'$.license') IS NOT ?",
         f.id,
         edition.parsed.license,
       );
@@ -443,6 +458,7 @@ export class Catalog {
       m.license = null;
       m.permissionSource = null;
     }
+    if (removeText) delete m.pageCandidate;
     if (removeText)
       m.permissions = {
         display: false,
@@ -530,8 +546,10 @@ export class Catalog {
       if (previous?.withdrawn) continue;
       const received = prior?.first_seen ?? now;
       const published = e.published ?? previous?.published ?? null;
-      const { paragraphs, ...content } = e.content;
-      const body = JSON.stringify(paragraphs);
+      const { paragraphs, document, ...content } = e.content;
+      const body = JSON.stringify(
+        document ? { paragraphs, document } : paragraphs,
+      );
       const bytes = paragraphs.length ? Buffer.byteLength(body) : 0;
       const fits = used - (prior?.body_bytes ?? 0) + bytes <= BODY_BUDGET;
       if (!fits) {
@@ -606,6 +624,7 @@ export class Catalog {
       )!;
       const m = JSON.parse(article.metadata);
       if (m.withdrawn) continue;
+      delete m.pageCandidate;
       m.withdrawn = true;
       m.coverage = "missing";
       m.reason = "The publisher withdrew this entry.";
@@ -641,7 +660,172 @@ export class Catalog {
       id,
     );
     if (!row) throw notFound();
-    return { ...JSON.parse(row.metadata), paragraphs: JSON.parse(row.body) };
+    const feed = JSON.parse(row.metadata);
+    const data = JSON.parse(row.body);
+    const page = this.one<{ metadata: string; body: string | null }>(
+      "SELECT metadata,body FROM page_editions WHERE article_id=?",
+      id,
+    );
+    return {
+      ...feed,
+      ...(Array.isArray(data) ? { paragraphs: data } : data),
+      ...(page && JSON.parse(page.metadata)),
+      ...(page?.body && JSON.parse(page.body)),
+    };
+  }
+  pageInput(owner: string, id: string) {
+    const row = this.one<{ metadata: string; checked: number | null }>(
+      "SELECT a.metadata,p.checked FROM articles a JOIN feeds f ON f.id=a.feed_id LEFT JOIN page_editions p ON p.article_id=a.id WHERE f.owner=? AND a.id=?",
+      owner,
+      id,
+    );
+    if (!row) throw notFound();
+    return { ...JSON.parse(row.metadata), checked: row.checked };
+  }
+  setPagePolicy(origins: ReadonlySet<string>, proofs: Proofs) {
+    this.transaction(() => {
+      const policy = digest(
+        JSON.stringify([[...origins].sort(), [...proofs.entries()].sort()]),
+      );
+      if (
+        this.one<{ value: string }>(
+          "SELECT value FROM settings WHERE name='page-origins'",
+        )?.value === policy
+      )
+        return;
+      const rows = this.all<{
+        id: string;
+        metadata: string;
+        first_seen: number;
+        feed_id: string;
+      }>(
+        "SELECT a.* FROM articles a WHERE json_extract(metadata,'$.pageCandidate.kind')='licensed'",
+      );
+      for (const row of rows) {
+        const m = JSON.parse(row.metadata);
+        if (!origins.has(new URL(m.pageCandidate.url).origin))
+          delete m.pageCandidate;
+        m.revision = digest(m.revision + "page-disabled");
+        const json = JSON.stringify(m);
+        this.run(
+          "UPDATE articles SET revision=?,metadata=? WHERE id=?",
+          m.revision,
+          json,
+          row.id,
+        );
+        this.run(
+          "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+          row.feed_id,
+          row.id,
+          m.published ? Date.parse(m.published) : row.first_seen,
+          json,
+        );
+      }
+      this.run("UPDATE feeds SET etag=NULL,modified=NULL");
+      this.run(
+        "INSERT OR REPLACE INTO settings VALUES('page-origins',?)",
+        policy,
+      );
+    });
+  }
+  recordPage(
+    owner: string,
+    id: string,
+    revision: string,
+    result: PageResult,
+    now: number,
+  ) {
+    return this.transaction(() => {
+      const base = this.pageInput(owner, id);
+      if (base.revision !== revision || !base.pageCandidate || base.withdrawn)
+        return;
+      let { document, ...patch } = result;
+      let body = document
+        ? JSON.stringify({
+            document,
+            paragraphs: originalText(document.nodes).split(/\n\n/),
+          })
+        : null;
+      const used = this.one<{ bytes: number }>(
+        "SELECT coalesce(sum(length(CAST(p.body AS BLOB))),0) AS bytes FROM page_editions p JOIN articles a ON a.id=p.article_id JOIN feeds f ON f.id=a.feed_id WHERE f.owner=? AND a.id!=?",
+        owner,
+        id,
+      )!.bytes;
+      if (body && used + Buffer.byteLength(body) > 16 * 1024 * 1024) {
+        body = null;
+        document = undefined;
+        patch = {
+          reason:
+            "The publisher-page cache is full. Open the original at the publisher.",
+        };
+      }
+      const suppressBody = patch.subscriberOnly && base.coverage !== "excerpt";
+      if (suppressBody)
+        body = JSON.stringify({ document: null, paragraphs: [] });
+      const { checked: previousCheck, ...baseline } = base;
+      void previousCheck;
+      const meta = {
+        ...baseline,
+        ...patch,
+        ...(document && {
+          pageUrl: base.pageCandidate.url,
+          pageCheckedAt: now,
+        }),
+        coverage:
+          patch.coverage ??
+          (patch.subscriberOnly
+            ? "excerpt"
+            : baseline.coverage === "complete"
+              ? "unverified"
+              : baseline.coverage),
+        ...(suppressBody && {
+          permissions: {
+            ...base.permissions,
+            display: false,
+            retain: false,
+            copy: false,
+          },
+        }),
+        ...(document && {
+          permissions: {
+            ...base.permissions,
+            display: true,
+            retain: true,
+            copy: true,
+          },
+        }),
+      };
+      meta.revision = digest(
+        JSON.stringify([base.revision, patch, body && digest(body)]),
+      );
+      const old = this.one<{ metadata: string }>(
+        "SELECT metadata FROM page_editions WHERE article_id=?",
+        id,
+      );
+      if (old && JSON.parse(old.metadata).revision === meta.revision) {
+        this.run(
+          "UPDATE page_editions SET checked=? WHERE article_id=?",
+          now,
+          id,
+        );
+        return;
+      }
+      const metadata = JSON.stringify(meta);
+      this.run(
+        "INSERT OR REPLACE INTO page_editions VALUES(?,?,?,?)",
+        id,
+        metadata,
+        body,
+        now,
+      );
+      this.run(
+        "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+        base.feedId,
+        id,
+        Date.parse(base.published ?? base.received),
+        metadata,
+      );
+    });
   }
   private cursor(owner: string, kind: string, values: unknown[]) {
     const text = Buffer.from(JSON.stringify(values)).toString("base64url");

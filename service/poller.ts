@@ -4,10 +4,17 @@ import {
   decodeDocument,
   discoverAlternate,
   parseFeed,
+  reviewKey,
   type Proofs,
 } from "./parser.ts";
 import { FeedError, publisherError, type Download } from "./types.ts";
 
+function storageRestricted(headers: Headers) {
+  return (
+    /\b(?:no-store|private)\b/i.test(headers.get("cache-control") ?? "") ||
+    /\b(?:noarchive|nosnippet|none)\b/i.test(headers.get("x-robots-tag") ?? "")
+  );
+}
 function freshness(headers: Headers, now: number) {
   const control = headers.get("cache-control") ?? "";
   if (/\bno-cache\b/i.test(control)) return 0;
@@ -26,14 +33,17 @@ export interface PollOptions {
   now?: () => number;
   jitter?: () => number;
   proofs?: Proofs;
+  pageOrigins?: ReadonlySet<string>;
 }
+import { extractPage } from "./original-page.ts";
 export class Poller {
   private catalog: Catalog;
   private download: Download;
   private now: () => number;
   private jitter: () => number;
   private proofs: Proofs;
-  private pending = new Map<string, Promise<Result>>();
+  private pageOrigins: ReadonlySet<string>;
+  private pending = new Map<string, Promise<unknown>>();
   private tail = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
   private ticking = false;
@@ -42,13 +52,14 @@ export class Poller {
     this.now = options.now ?? Date.now;
     this.download = options.download ?? createDownloader(undefined, this.now);
     this.jitter = options.jitter ?? (() => Math.floor(Math.random() * 90000));
+    this.pageOrigins = options.pageOrigins ?? new Set();
     this.proofs = options.proofs ?? new Map();
   }
   // A personal installation needs one publisher request at a time. Manual, scheduled and
   // discovery requests share this bounded queue, so they also respect per-host concurrency.
-  private queue(key: string, work: () => Promise<Result>) {
+  private queue<T>(key: string, work: () => Promise<T>) {
     const running = this.pending.get(key);
-    if (running) return running;
+    if (running) return running as Promise<T>;
     if (this.pending.size >= 64)
       throw new FeedError(
         "busy",
@@ -91,10 +102,9 @@ export class Poller {
         aliases = [...aliases, ...response.aliases];
       }
       parsed = parseFeed(input, response.url, {
-        storeText: !/\bno-store\b/i.test(
-          response.headers.get("cache-control") ?? "",
-        ),
+        storeText: !storageRestricted(response.headers),
         proofs: this.proofs,
+        pageOrigins: this.pageOrigins,
       });
     } else if (
       response.status !== 304 ||
@@ -103,9 +113,7 @@ export class Poller {
     ) {
       throw publisherError(response.status, response.headers, this.now());
     }
-    const noStore = /\bno-store\b/i.test(
-      response.headers.get("cache-control") ?? "",
-    );
+    const noStore = storageRestricted(response.headers);
     return {
       url: response.url,
       aliases,
@@ -186,6 +194,26 @@ export class Poller {
     return this.queue(JSON.stringify(["poll", owner, id]), () =>
       this.poll(owner, id, manual),
     );
+  }
+  original(owner: string, id: string) {
+    return this.queue(JSON.stringify(["original", owner, id]), async () => {
+      const input = this.catalog.pageInput(owner, id);
+      if (
+        input.pageCandidate &&
+        !input.withdrawn &&
+        (input.checked === null || this.now() - input.checked >= 60000)
+      ) {
+        const feed = this.catalog.get(owner, input.feedId);
+        const reviewedText = this.proofs.get(
+          reviewKey(feed.validator_url, input.pageCandidate.url),
+        );
+        const result = await extractPage(
+          { ...input, reviewedText },
+          this.download,
+        );
+        this.catalog.recordPage(owner, id, input.revision, result, this.now());
+      }
+    });
   }
   async tick() {
     if (this.ticking) return;

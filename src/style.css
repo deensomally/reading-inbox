@@ -619,12 +619,18 @@ svg {
 .original-body p {
   white-space: pre-line;
 }
-.original-body h3 {
+.original-body :is(h1, h2, h3, h4, h5, h6) {
   font-weight: 500;
   font-size: 1.45em;
   line-height: 1.2;
   letter-spacing: -0.035em;
   margin: 1.4em 0 0.48em;
+}
+.original-body :is(h1, h2) {
+  font-size: 1.6em;
+}
+.original-body :is(h4, h5, h6) {
+  font-size: 1.15em;
 }
 .original-body blockquote {
   color: light-dark(#5d584a, #d0c8b6);
@@ -1201,4 +1207,39 @@ textarea {
   .library-switch svg {
     width: 1rem;
   }
+}
+
+.original-body li + li {
+  margin-top: 0.35em;
+}
+.original-body li > p {
+  margin: 0.25em 0;
+}
+.original-body pre,
+.article-table {
+  overflow: auto;
+  max-width: 100%;
+}
+.original-body pre {
+  padding: 0.8em;
+  white-space: pre;
+}
+.original-body table {
+  border-collapse: collapse;
+  font: inherit;
+}
+.original-body th,
+.original-body td {
+  border: 1px solid var(--rule);
+  padding: 0.35em 0.6em;
+  text-align: start;
+}
+.original-body figure img {
+  max-width: 100%;
+  height: auto;
+}
+.figure-handoff,
+.page-status {
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  font-size: 0.9em;
 }

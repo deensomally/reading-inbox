@@ -47,6 +47,11 @@ export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
   library?: "subscriptions";
   license?: string;
   reviewedDebian?: boolean;
+  document?: import("../../shared/original").OriginalDocument;
+  checkPage?: boolean;
+  pageUrl?: string;
+  pageCheckedAt?: number;
+  subscriberOnly?: boolean;
   source: "rss" | "newsletter";
   sourceKey: string;
   blocks: Block[];
