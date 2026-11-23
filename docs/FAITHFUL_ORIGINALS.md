@@ -77,7 +77,11 @@ npm.cmd run test:e2e
 To exercise the upgrade in an isolated test profile using an installed copy of Brave, set its executable path in PowerShell and run the focused test. The test builds the released Milestone 3 PWA, pairs it, reads and saves an article, then opens the updated PWA offline and reconnects with the publisher-only article still open.
 
 ```powershell
-$env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'
+$bravePath = 'BraveSoftware\Brave-Browser\Application\brave.exe'
+$env:READER_BROWSER_EXECUTABLE = Join-Path $env:LOCALAPPDATA $bravePath
+if (!(Test-Path -LiteralPath $env:READER_BROWSER_EXECUTABLE)) {
+  $env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles $bravePath
+}
 npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint"
 Remove-Item Env:READER_BROWSER_EXECUTABLE
 ```

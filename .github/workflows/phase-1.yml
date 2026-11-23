@@ -41,7 +41,11 @@ jobs:
         shell: pwsh
         run: |
           choco install brave --yes --no-progress
-          $env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'
+          $bravePath = 'BraveSoftware\Brave-Browser\Application\brave.exe'
+          $env:READER_BROWSER_EXECUTABLE = Join-Path $env:LOCALAPPDATA $bravePath
+          if (!(Test-Path -LiteralPath $env:READER_BROWSER_EXECUTABLE)) {
+            $env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles $bravePath
+          }
           (Get-Item -LiteralPath $env:READER_BROWSER_EXECUTABLE -ErrorAction Stop).VersionInfo.ProductVersion
           npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint"
       - name: Sample three live publishers with the local service
