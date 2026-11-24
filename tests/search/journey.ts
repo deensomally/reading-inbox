@@ -189,7 +189,7 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
       .selectOption(JSON.stringify("Rivers"));
     await dialog.getByLabel("Sort order").selectOption("longest");
     await dialog.getByLabel("Group by publication").check();
-    await dialog.getByRole("button", { name: /Show .* articles/ }).click();
+    await dialog.getByRole("button", { name: "Show 833 articles" }).click();
     await expect(page.locator(".publication-group")).toHaveText("Journal 0");
     const row = page.locator(".row-link").nth(18);
     await row.scrollIntoViewIfNeeded();

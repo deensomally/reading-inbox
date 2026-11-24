@@ -1,11 +1,4 @@
-import {
-  Fragment,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
@@ -23,13 +16,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { Library, db, seedLibrary } from "./data/store";
-import {
-  collections,
-  dateLabel,
-  status,
-  type Collection,
-  type Stage,
-} from "./data/model";
+import { collections, type Collection, type Stage } from "./data/model";
 import {
   listUrl,
   navigate,
@@ -55,9 +42,11 @@ import {
   defaults,
   filtered,
   resultPage,
+  orderedRows,
   sortOptions,
   type SearchOptions,
 } from "./data/search";
+import { InboxRow } from "./components/InboxRow";
 import { InboxControls } from "./components/InboxControls";
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
@@ -158,9 +147,11 @@ function Workspace({
     remembered?.library === library.name && remembered.collection === collection
       ? remembered
       : undefined;
-  const [options, setOptions] = useState<SearchOptions>(
+  const [filters, setFilters] = useState<Omit<SearchOptions, "text">>(
     () => context?.options ?? defaults,
   );
+  const [text, setText] = useState(() => context?.options.text ?? "");
+  const options = useMemo(() => ({ ...filters, text }), [filters, text]);
   const [manage, setManage] = useState(false);
   const [limit, setLimit] = useState(() => context?.limit ?? 40);
   const [loaded, setLoaded] = useState(false);
@@ -201,17 +192,34 @@ function Workspace({
         : undefined,
     [loaded, library, live],
   );
-  const result = useLiveQuery(async () => {
-    if (!catalog) return;
-    const terms = await library.matchingTerms(options.text);
-    return {
-      ...resultPage(catalog, collection, options, terms, limit, id),
-      terms,
-    };
-  }, [catalog, library, collection, options, limit, id]);
-  const page = result?.collection === collection ? result : undefined;
-  function changeOptions(next: SearchOptions) {
-    setOptions(next);
+  const matches = useLiveQuery(
+    async () =>
+      loaded ? { text, terms: await library.matchingTerms(text) } : undefined,
+    [loaded, library, text],
+  );
+  const ordered = useMemo(
+    () => catalog && orderedRows(catalog, filters.sort, filters.grouped),
+    [catalog, filters.sort, filters.grouped],
+  );
+  const page = useMemo(
+    () =>
+      catalog && matches && ordered
+        ? resultPage(
+            catalog,
+            collection,
+            { ...filters, text: matches.text },
+            matches.terms,
+            limit,
+            id,
+            ordered,
+          )
+        : undefined,
+    [catalog, matches, ordered, collection, filters, limit, id],
+  );
+  function changeOptions({ text, ...patch }: Partial<SearchOptions>) {
+    if (text !== undefined) setText(text);
+    if (Object.keys(patch).length)
+      setFilters((previous) => ({ ...previous, ...patch }));
     setLimit(40);
     if (list.current) list.current.scrollTop = 0;
   }
@@ -235,6 +243,18 @@ function Workspace({
       ? { a: article, s: selected.s }
       : undefined;
   const ready = loaded && !!page;
+  useEffect(() => {
+    const pane = list.current;
+    if (!ready || id || !pane) return;
+    const key = (live ? "feeds-list-" : "list-") + collection;
+    const save = () => sessionStorage.setItem(key, String(pane.scrollTop));
+    pane.addEventListener("scrollend", save);
+    window.addEventListener("pagehide", save);
+    return () => {
+      pane.removeEventListener("scrollend", save);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [collection, id, live, ready]);
   useLayoutEffect(() => {
     if (!ready) return;
     if (ready && list.current && !id) {
@@ -430,7 +450,7 @@ function Workspace({
                     {collection === "Inbox" && filtered(options)
                       ? "Across your library"
                       : collection === "Inbox"
-                        ? (page?.unread ?? 0) + " unread"
+                        ? (catalog?.inboxUnread ?? 0) + " unread"
                         : (page?.total ?? 0) +
                           " " +
                           (page?.total === 1 ? "article" : "articles")}
@@ -439,13 +459,13 @@ function Workspace({
                     <ArrowDownWideNarrow /> {sortOptions[options.sort]}
                   </span>
                 </div>
-                {catalog && page && (
+                {catalog && matches && (
                   <InboxControls
                     options={options}
                     change={changeOptions}
                     clear={clearOptions}
                     catalog={catalog}
-                    terms={page.terms}
+                    terms={matches.terms}
                     collection={collection}
                     total={page?.total ?? 0}
                   />
@@ -471,90 +491,37 @@ function Workspace({
                 className="list-scroll"
                 aria-busy={page?.text !== options.text}
                 ref={list}
-                onScroll={(e) => {
-                  if (!id)
-                    sessionStorage.setItem(
-                      (live ? "feeds-list-" : "list-") + collection,
-                      String(e.currentTarget.scrollTop),
-                    );
+                onClick={(e) => {
+                  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                  const link =
+                    e.target instanceof Element
+                      ? e.target.closest<HTMLAnchorElement>(
+                          "a.row-link, a.quick-original",
+                        )
+                      : null;
+                  if (!link) return;
+                  const target = route(link.hash);
+                  if (target.id) {
+                    e.preventDefault();
+                    open(target.id, target.stage);
+                  }
                 }}
               >
-                {visible.map(({ a, s }, i) => (
-                  <Fragment key={a.id}>
-                    {options.grouped &&
-                      visible[i - 1]?.a.publication !== a.publication && (
-                        <h2 className="publication-group">{a.publication}</h2>
-                      )}
-                    <div
-                      className={
-                        "article-row" +
-                        (a.id === current?.a.id ? " selected" : "")
-                      }
-                    >
-                      <a
-                        className="row-link"
-                        id={"row-" + a.id}
-                        href={readerUrl(
-                          collection,
-                          a.id,
-                          s.lastStage ?? "essence",
-                          live,
-                        )}
-                        onClick={(e) => {
-                          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                            return;
-                          e.preventDefault();
-                          open(a.id, s.lastStage ?? "essence");
-                        }}
-                      >
-                        <div className="row-top">
-                          <span>{a.publication}</span>
-                          <time dateTime={a.published ?? a.received}>
-                            {dateLabel(a)}
-                          </time>
-                        </div>
-                        <h2>{a.title}</h2>
-                        <div className="row-bottom">
-                          {a.author && (
-                            <>
-                              <span>{a.author}</span>
-                              <i />
-                            </>
-                          )}
-                          <span className="read-state">
-                            {!s.opened && <b />}
-                            {status(s)}
-                          </span>
-                          {s.archived && (
-                            <Archive size={13} aria-label="Archived" />
-                          )}
-                          {(options.sort === "shortest" ||
-                            options.sort === "longest") && (
-                            <span>
-                              {a.wordCount === undefined
-                                ? "Length unknown"
-                                : a.wordCount + " words"}
-                            </span>
-                          )}
-                          {s.saved && <Bookmark aria-label="Saved" size={13} />}
-                        </div>
-                      </a>
-                      <a
-                        className="quick-original"
-                        aria-label={"Read original of " + a.title}
-                        title="Read original"
-                        href={readerUrl(collection, a.id, "original", live)}
-                        onClick={(e) => {
-                          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                            return;
-                          e.preventDefault();
-                          open(a.id, "original");
-                        }}
-                      >
-                        <BookOpen />
-                      </a>
-                    </div>
-                  </Fragment>
+                {visible.map((row, i) => (
+                  <InboxRow
+                    key={row.a.id}
+                    row={row}
+                    selected={row.a.id === current?.a.id}
+                    live={live}
+                    collection={collection}
+                    group={
+                      options.grouped &&
+                      visible[i - 1]?.a.publication !== row.a.publication
+                    }
+                    showLength={
+                      options.sort === "shortest" || options.sort === "longest"
+                    }
+                  />
                 ))}
                 {(page?.total ?? 0) > visible.length && (
                   <button

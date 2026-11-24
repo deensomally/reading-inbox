@@ -21,7 +21,7 @@ export function InboxControls({
   total,
 }: {
   options: SearchOptions;
-  change: (o: SearchOptions) => void;
+  change: (o: Partial<SearchOptions>) => void;
   clear: () => void;
   catalog: SearchCatalog;
   terms: Set<string>[];
@@ -35,9 +35,7 @@ export function InboxControls({
   );
   const custom =
     filtered(options) || options.grouped || options.sort !== defaults.sort;
-  function set(patch: Partial<SearchOptions>) {
-    change({ ...options, ...patch });
-  }
+
   return (
     <>
       <div className="search-bar">
@@ -51,7 +49,7 @@ export function InboxControls({
             aria-label="Search articles"
             placeholder="Search articles"
             value={options.text}
-            onChange={(e) => set({ text: e.target.value })}
+            onChange={(e) => change({ text: e.target.value })}
           />
         </label>
         <button
@@ -75,7 +73,7 @@ export function InboxControls({
               <select
                 id="filter-publication"
                 value={options.publication}
-                onChange={(e) => set({ publication: e.target.value })}
+                onChange={(e) => change({ publication: e.target.value })}
               >
                 <option value="">All publications</option>
                 {[...catalog.publications.keys()].sort().map((p) => (
@@ -90,7 +88,7 @@ export function InboxControls({
               <select
                 id="filter-topic"
                 value={JSON.stringify(options.topic)}
-                onChange={(e) => set({ topic: JSON.parse(e.target.value) })}
+                onChange={(e) => change({ topic: JSON.parse(e.target.value) })}
               >
                 <option value="null">All topics</option>
                 {[...catalog.topics.keys()].sort().map((t) => (
@@ -106,7 +104,7 @@ export function InboxControls({
                 id="filter-reading-status"
                 value={options.read}
                 onChange={(e) =>
-                  set({ read: e.target.value as SearchOptions["read"] })
+                  change({ read: e.target.value as SearchOptions["read"] })
                 }
               >
                 <option value="any">Any reading status</option>
@@ -119,7 +117,7 @@ export function InboxControls({
                 <input
                   type="checkbox"
                   checked={options.saved}
-                  onChange={(e) => set({ saved: e.target.checked })}
+                  onChange={(e) => change({ saved: e.target.checked })}
                 />{" "}
                 Saved only
               </label>
@@ -127,7 +125,7 @@ export function InboxControls({
                 <input
                   type="checkbox"
                   checked={options.archived}
-                  onChange={(e) => set({ archived: e.target.checked })}
+                  onChange={(e) => change({ archived: e.target.checked })}
                 />{" "}
                 Archived only
               </label>
@@ -138,7 +136,7 @@ export function InboxControls({
                 id="filter-sort-order"
                 value={options.sort}
                 onChange={(e) =>
-                  set({ sort: e.target.value as SearchOptions["sort"] })
+                  change({ sort: e.target.value as SearchOptions["sort"] })
                 }
               >
                 {Object.entries(sortOptions).map(([v, label]) => (
@@ -152,7 +150,7 @@ export function InboxControls({
               <input
                 type="checkbox"
                 checked={options.grouped}
-                onChange={(e) => set({ grouped: e.target.checked })}
+                onChange={(e) => change({ grouped: e.target.checked })}
               />{" "}
               Group by publication
             </label>

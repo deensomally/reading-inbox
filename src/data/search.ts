@@ -81,7 +81,7 @@ export function filtered(o: SearchOptions) {
     o.archived
   );
 }
-type Row = { a: ArticleListItem; s: ReadingState };
+export type Row = { a: ArticleListItem; s: ReadingState };
 function membership(map: Map<string, Set<string>>, label: string, id: string) {
   let set = map.get(label);
   if (!set) {
@@ -107,6 +107,7 @@ export function buildCatalog(
     saved: new Set<string>(),
     archived: new Set<string>(),
   };
+  let inboxUnread = 0;
   for (const a of articles) {
     const s = reading.get(a.id) ?? initialState(a.id);
     rows.set(a.id, { a, s });
@@ -115,13 +116,18 @@ export function buildCatalog(
       membership(topics, topic, a.id);
     status[s.archived ? "archived" : "unarchived"].add(a.id);
     status[s.opened ? "opened" : "unread"].add(a.id);
+    if (!s.opened && !s.archived) inboxUnread++;
     if (s.saved) status.saved.add(a.id);
   }
-  return { rows, publications, topics, status };
+  return { rows, publications, topics, status, inboxUnread };
 }
 export type SearchCatalog = ReturnType<typeof buildCatalog>;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-function order(a: ArticleListItem, b: ArticleListItem, o: SearchOptions) {
+function order(
+  a: ArticleListItem,
+  b: ArticleListItem,
+  o: Pick<SearchOptions, "grouped" | "sort">,
+) {
   if (o.grouped && a.publication !== b.publication)
     return compare(a.publication, b.publication);
   if (o.sort === "shortest" || o.sort === "longest") {
@@ -140,13 +146,26 @@ function order(a: ArticleListItem, b: ArticleListItem, o: SearchOptions) {
     compare(a.id, b.id)
   );
 }
+export function orderedRows(
+  c: SearchCatalog,
+  sort: SearchOptions["sort"],
+  grouped: boolean,
+) {
+  const ordering = { sort, grouped };
+  return [...c.rows.values()].sort((x, y) => order(x.a, y.a, ordering));
+}
+type Membership = {
+  size: number;
+  keys(): IterableIterator<string>;
+  has(id: string): boolean;
+};
 function candidates(
   c: SearchCatalog,
   collection: Collection,
   o: SearchOptions,
   terms: Set<string>[],
   prospective = false,
-) {
+): Membership {
   const sets = [...terms];
   if (collection === "Unread") sets.push(c.status.unarchived, c.status.unread);
   if (collection === "Saved" || o.saved) sets.push(c.status.saved);
@@ -158,14 +177,13 @@ function candidates(
   if (o.topic !== null) sets.push(c.topics.get(o.topic) ?? new Set());
   sets.sort((a, b) => a.size - b.size);
   const [smallest, ...others] = sets;
-  const rows: Row[] = [];
-  for (const id of smallest ?? c.rows.keys()) {
-    if (others.every((set) => set.has(id))) {
-      const row = c.rows.get(id);
-      if (row) rows.push(row);
-    }
+  if (!smallest) return c.rows;
+  if (!others.length) return smallest;
+  const ids = new Set<string>();
+  for (const id of smallest) {
+    if (others.every((set) => set.has(id))) ids.add(id);
   }
-  return rows;
+  return ids;
 }
 export function resultPage(
   c: SearchCatalog,
@@ -174,16 +192,31 @@ export function resultPage(
   terms: Set<string>[],
   limit: number,
   chosen?: string,
+  ordered = orderedRows(c, o.sort, o.grouped),
 ) {
-  const matches = candidates(c, collection, o, terms);
-  matches.sort((x, y) => order(x.a, y.a, o));
+  const ids = candidates(c, collection, o, terms);
+  let rows: Row[] = [];
+  // Common terms already have a count. Walk the chosen order only until the
+  // page is full. For sparse matches, visit and sort only their postings.
+  if (ids.size > c.rows.size / 4) {
+    for (const row of ordered) {
+      if (ids.has(row.a.id)) rows.push(row);
+      if (rows.length === limit) break;
+    }
+  } else {
+    for (const id of ids.keys()) {
+      const row = c.rows.get(id);
+      if (row) rows.push(row);
+    }
+    rows.sort((x, y) => order(x.a, y.a, o));
+    rows = rows.slice(0, limit);
+  }
   return {
     collection,
     text: o.text,
-    rows: matches.slice(0, limit),
-    total: matches.length,
-    unread: matches.reduce((n, r) => n + Number(!r.s.opened), 0),
-    selected: chosen ? c.rows.get(chosen) : matches[0],
+    rows,
+    total: ids.size,
+    selected: chosen ? c.rows.get(chosen) : rows[0],
   };
 }
 // Each option shows how many articles would match with the other filters kept.
@@ -195,22 +228,31 @@ export function facetCounts(
 ) {
   const publications = new Map<string, number>(),
     topics = new Map<string, number>();
-  for (const { a } of candidates(
+  for (const id of candidates(
     c,
     collection,
     { ...o, publication: "" },
     terms,
     true,
-  ))
-    publications.set(a.publication, (publications.get(a.publication) ?? 0) + 1);
-  for (const { a } of candidates(
+  ).keys()) {
+    const row = c.rows.get(id);
+    if (row)
+      publications.set(
+        row.a.publication,
+        (publications.get(row.a.publication) ?? 0) + 1,
+      );
+  }
+  for (const id of candidates(
     c,
     collection,
     { ...o, topic: null },
     terms,
     true,
-  ))
-    for (const t of a.topics.length ? a.topics : [""])
-      topics.set(t, (topics.get(t) ?? 0) + 1);
+  ).keys()) {
+    const row = c.rows.get(id);
+    if (row)
+      for (const t of row.a.topics.length ? row.a.topics : [""])
+        topics.set(t, (topics.get(t) ?? 0) + 1);
+  }
   return { publications, topics };
 }
