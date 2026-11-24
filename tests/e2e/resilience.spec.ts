@@ -188,7 +188,9 @@ test("regular browser profile accepts the PWA and relaunches the installed reade
         await app
           .getByRole("button", { name: "Copy summary", exact: true })
           .click();
-        await expect(app.getByRole("status")).toHaveText("Summary copied");
+        await expect(
+          app.getByRole("status").filter({ hasText: "Summary copied" }),
+        ).toHaveText("Summary copied");
         // Paste into a native Windows text box owned by another process.
         const pasted = execFileSync(
           "powershell.exe",
