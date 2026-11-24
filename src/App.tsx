@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
@@ -51,6 +58,13 @@ import { InboxRow } from "./components/InboxRow";
 import { AppUpdate } from "./components/AppUpdate";
 import { PublicationGroup } from "./components/PublicationGroup";
 import { InboxControls, SortOrder } from "./components/InboxControls";
+// The narrow layout shows one pane at a time. Loading the hidden desktop
+// preview would read an article body on every change of the first result.
+const narrowLayout = window.matchMedia("(max-width: 51rem)");
+function subscribeLayout(change: () => void) {
+  narrowLayout.addEventListener("change", change);
+  return () => narrowLayout.removeEventListener("change", change);
+}
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
   Inbox: ["Your inbox is clear", "Archived articles are available in Archive."],
@@ -256,7 +270,11 @@ function Workspace({
       ? page.selected
       : visible.find((row) => row.a.id === id)
     : visible[0];
-  const selectedId = selected?.a.id;
+  const narrow = useSyncExternalStore(
+    subscribeLayout,
+    () => narrowLayout.matches,
+  );
+  const selectedId = id || !narrow ? selected?.a.id : undefined;
   const article = useLiveQuery(
     () => (selectedId ? library.articles.get(selectedId) : undefined),
     [library, selectedId],
@@ -329,7 +347,7 @@ function Workspace({
       <InboxRow
         key={row.a.id}
         row={row}
-        selected={row.a.id === current?.a.id}
+        selected={row.a.id === selected?.a.id}
         live={live}
         collection={collection}
         showLength={options.sort === "shortest" || options.sort === "longest"}

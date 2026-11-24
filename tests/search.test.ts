@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import Dexie from "dexie";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { LiveLibrary, collect, type Delivery } from "../src/data/live-library";
 import {
   defaults,
@@ -337,4 +337,36 @@ it("repairs only legacy list rows after an open M5 tab edits a body or withdraws
   ).toEqual([2, undefined]);
   expect((await db.matchingTerms("moonstone"))[0].size).toBe(0);
   expect(await db.articles.get("rss-a")).toEqual(updated);
+});
+
+it("reactively refreshes active prefix matches on same-size edits, rights loss and deletion", async () => {
+  await commit([first]);
+  const results: string[][] = [];
+  const subscription = Dexie.liveQuery(() =>
+    db.matchingTerms("manus"),
+  ).subscribe((matches) => results.push([...matches[0]]));
+  try {
+    await vi.waitFor(() => expect(results.at(-1)).toEqual([]));
+    const edited = {
+      ...first,
+      paragraphs: ["A manuscript."],
+      revision: "edit",
+    };
+    await commit([edited]);
+    await vi.waitFor(() => expect(results.at(-1)).toEqual(["rss-a"]));
+    await commit([
+      {
+        ...edited,
+        permissions: { ...edited.permissions, retain: false },
+        revision: "restricted",
+      },
+    ]);
+    await vi.waitFor(() => expect(results.at(-1)).toEqual([]));
+    await commit([edited]);
+    await vi.waitFor(() => expect(results.at(-1)).toEqual(["rss-a"]));
+    await db.searchTerms.delete("rss-a");
+    await vi.waitFor(() => expect(results.at(-1)).toEqual([]));
+  } finally {
+    subscription.unsubscribe();
+  }
 });

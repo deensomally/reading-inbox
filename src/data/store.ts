@@ -128,17 +128,27 @@ export class Library extends Dexie {
     const words = [...new Set(tokens(text))];
     if (!words.length && text.trim())
       return Promise.resolve([new Set<string>()]);
-    return Promise.all(
-      words.map(
-        async (word) =>
-          new Set(
-            await this.searchTerms
-              .where("terms")
-              .startsWith(word)
-              .primaryKeys(),
-          ),
-      ),
-    );
+    if (!words.length) return Promise.resolve<Set<string>[]>([]);
+    return this.transaction("r", this.searchTerms, async (tx) => {
+      // Observe writes to the postings store once. For a broad prefix Dexie's
+      // reactive primaryKeys() otherwise records thousands of individual IDs
+      // to watch for deletion on every keystroke. Both reads share a snapshot.
+      await this.searchTerms.count();
+      const index = tx.idbtrans.objectStore("searchTerms").index("terms");
+      return Promise.all(
+        words.map(
+          (word) =>
+            new Promise<Set<string>>((resolve, reject) => {
+              const request = index.getAllKeys(
+                IDBKeyRange.bound(word, word + "\uffff"),
+              );
+              request.onsuccess = () =>
+                resolve(new Set(request.result as string[]));
+              request.onerror = () => reject(request.error);
+            }),
+        ),
+      );
+    });
   }
   async deliver(articles: Article[], { onlyMissing = false } = {}) {
     await this.transaction(

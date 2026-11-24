@@ -107,6 +107,7 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
     // Include broad prefixes, a body-only prefix, a conjunction and individual
     // matches beyond page one. Timing starts in the browser on the input event.
     const samples: number[] = [];
+    const byQuery: Record<string, number> = {};
     for (const [query, total] of [
       ["d", 10000],
       ["di", 10000],
@@ -132,6 +133,7 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
           query,
         ),
       );
+      byQuery[query] = samples[samples.length - 1];
     }
     await expect(
       page.getByRole("heading", { name: "No matching articles" }),
@@ -171,6 +173,7 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
         platform: await page.evaluate(() => navigator.userAgent),
         articles: 10000,
         samples: samples.length,
+        byQuery,
         inputP50: samples[Math.floor(samples.length / 2)],
         inputP95: samples[Math.ceil(0.95 * samples.length) - 1],
         ...scrolling,

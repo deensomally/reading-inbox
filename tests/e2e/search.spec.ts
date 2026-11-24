@@ -82,3 +82,26 @@ test("the inbox and dialog share all four sort orders and put unknown lengths af
   await menu.getByRole("button", { name: "Show 8 articles" }).click();
   await expect(quick).toHaveValue("newest");
 });
+
+test("a narrow search loads the reader on open and resizing restores the desktop preview", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 412, height: 820 });
+  await page.goto("/");
+  const search = page.getByRole("searchbox");
+  await search.fill("night train");
+  const result = page.locator("#row-night-train");
+  await expect(result).toBeVisible();
+  await expect(page.locator(".desk.is-preview")).toHaveCount(0);
+  await page.setViewportSize({ width: 1200, height: 820 });
+  await expect(page.locator(".desk.is-preview")).toContainText(
+    "The night train that carries a library",
+  );
+  await page.setViewportSize({ width: 412, height: 820 });
+  await expect(page.locator(".desk.is-preview")).toHaveCount(0);
+  await result.click();
+  await expect(page.locator(".summary-text")).toBeVisible();
+  await page.getByRole("button", { name: "Back to list" }).click();
+  await expect(result).toBeFocused();
+  await expect(search).toHaveValue("night train");
+});
