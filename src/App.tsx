@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
@@ -23,7 +30,14 @@ import {
   type Collection,
   type Stage,
 } from "./data/model";
-import { listUrl, navigate, readerUrl, route, useHash } from "./navigation";
+import {
+  listUrl,
+  navigate,
+  readerUrl,
+  route,
+  useHash,
+  type ListContext,
+} from "./navigation";
 import { Appearance } from "./components/Appearance";
 import { Reader } from "./components/Reader";
 import { Dialog } from "./components/Dialogs";
@@ -37,6 +51,14 @@ import {
   type Collector,
 } from "./components/Subscriptions";
 import { LibraryContext } from "./data/library-context";
+import {
+  defaults,
+  filtered,
+  resultPage,
+  sortOptions,
+  type SearchOptions,
+} from "./data/search";
+import { InboxControls } from "./components/InboxControls";
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
   Inbox: ["Your inbox is clear", "Archived articles are available in Archive."],
@@ -128,9 +150,19 @@ function Workspace({
   feeds?: { collector: Collector; library: LiveLibrary; paired: boolean };
 }) {
   const live = !!feeds;
-  const [manage, setManage] = useState(false);
-  const [limit, setLimit] = useState(40);
   const { collection, id, stage, publisher, discussion } = route(hash);
+  // A browser may discard the reader tab on mobile. Keep its return context
+  // in this history entry, scoped to the local library and outside the URL.
+  const remembered: ListContext | undefined = history.state?.listContext;
+  const context =
+    remembered?.library === library.name && remembered.collection === collection
+      ? remembered
+      : undefined;
+  const [options, setOptions] = useState<SearchOptions>(
+    () => context?.options ?? defaults,
+  );
+  const [manage, setManage] = useState(false);
+  const [limit, setLimit] = useState(() => context?.limit ?? 40);
   const [loaded, setLoaded] = useState(false);
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [failure, setFailure] = useState("");
@@ -145,7 +177,7 @@ function Workspace({
   useEffect(() => {
     const blocked = () => setUpgradeBlocked(true);
     library.on("blocked", blocked);
-    (live ? library.open() : seedLibrary(library)).then(
+    (live ? library.prepareIndexes() : seedLibrary(library)).then(
       () => setLoaded(true),
       (e) =>
         setFailure(
@@ -162,19 +194,31 @@ function Workspace({
       clearTimeout(noticeTimer.current);
     };
   }, [library, live]);
-  const result = useLiveQuery(
-    () =>
+  const catalog = useLiveQuery(
+    async () =>
       loaded
-        ? library.collectionPage(
-            live ? "subscriptions" : "demo",
-            collection,
-            limit,
-            id,
-          )
+        ? library.searchCatalog(live ? "subscriptions" : "demo")
         : undefined,
-    [loaded, library, live, collection, limit, id],
+    [loaded, library, live],
   );
+  const result = useLiveQuery(async () => {
+    if (!catalog) return;
+    const terms = await library.matchingTerms(options.text);
+    return {
+      ...resultPage(catalog, collection, options, terms, limit, id),
+      terms,
+    };
+  }, [catalog, library, collection, options, limit, id]);
   const page = result?.collection === collection ? result : undefined;
+  function changeOptions(next: SearchOptions) {
+    setOptions(next);
+    setLimit(40);
+    if (list.current) list.current.scrollTop = 0;
+  }
+  function clearOptions() {
+    changeOptions(defaults);
+    if (collection !== "Inbox" || id) navigate(listUrl("Inbox", live));
+  }
   const visible = page?.rows ?? [];
   const selected = id
     ? page?.selected?.a.id === id
@@ -230,6 +274,7 @@ function Workspace({
       readerUrl(collection, articleId, s, live),
       !!id,
       !id || !!history.state?.fromList,
+      { library: library.name, collection, options, limit },
     );
   }
   function back() {
@@ -255,6 +300,10 @@ function Workspace({
                   <a
                     key={c}
                     href={listUrl(c, live)}
+                    onClick={(e) => {
+                      if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
+                        changeOptions(defaults);
+                    }}
                     aria-current={collection === c ? "page" : undefined}
                   >
                     <Icon />
@@ -362,20 +411,45 @@ function Workspace({
                   <h1 tabIndex={-1} ref={title}>
                     {collection}
                   </h1>
-                  <span className="count">{page?.total ?? 0}</span>
+                  <span
+                    className="count"
+                    role="status"
+                    aria-label={
+                      page?.text
+                        ? page.total +
+                          (page.total === 1 ? " match for " : " matches for ") +
+                          page.text
+                        : (page?.total ?? 0) + " articles"
+                    }
+                  >
+                    {page?.total ?? 0}
+                  </span>
                 </div>
                 <div className="list-meta">
                   <span>
-                    {collection === "Inbox"
-                      ? (page?.unread ?? 0) + " unread"
-                      : (page?.total ?? 0) +
-                        " " +
-                        (page?.total === 1 ? "article" : "articles")}
+                    {collection === "Inbox" && filtered(options)
+                      ? "Across your library"
+                      : collection === "Inbox"
+                        ? (page?.unread ?? 0) + " unread"
+                        : (page?.total ?? 0) +
+                          " " +
+                          (page?.total === 1 ? "article" : "articles")}
                   </span>
                   <span>
-                    <ArrowDownWideNarrow /> Newest first
+                    <ArrowDownWideNarrow /> {sortOptions[options.sort]}
                   </span>
                 </div>
+                {catalog && page && (
+                  <InboxControls
+                    options={options}
+                    change={changeOptions}
+                    clear={clearOptions}
+                    catalog={catalog}
+                    terms={page.terms}
+                    collection={collection}
+                    total={page?.total ?? 0}
+                  />
+                )}
                 {feeds && (
                   <div className="subscription-tools">
                     <button
@@ -395,6 +469,7 @@ function Workspace({
               </header>
               <div
                 className="list-scroll"
+                aria-busy={page?.text !== options.text}
                 ref={list}
                 onScroll={(e) => {
                   if (!id)
@@ -404,66 +479,82 @@ function Workspace({
                     );
                 }}
               >
-                {visible.map(({ a, s }) => (
-                  <div
-                    key={a.id}
-                    className={
-                      "article-row" +
-                      (a.id === current?.a.id ? " selected" : "")
-                    }
-                  >
-                    <a
-                      className="row-link"
-                      id={"row-" + a.id}
-                      href={readerUrl(
-                        collection,
-                        a.id,
-                        s.lastStage ?? "essence",
-                        live,
+                {visible.map(({ a, s }, i) => (
+                  <Fragment key={a.id}>
+                    {options.grouped &&
+                      visible[i - 1]?.a.publication !== a.publication && (
+                        <h2 className="publication-group">{a.publication}</h2>
                       )}
-                      onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                          return;
-                        e.preventDefault();
-                        open(a.id, s.lastStage ?? "essence");
-                      }}
+                    <div
+                      className={
+                        "article-row" +
+                        (a.id === current?.a.id ? " selected" : "")
+                      }
                     >
-                      <div className="row-top">
-                        <span>{a.publication}</span>
-                        <time dateTime={a.published ?? a.received}>
-                          {dateLabel(a)}
-                        </time>
-                      </div>
-                      <h2>{a.title}</h2>
-                      <div className="row-bottom">
-                        {a.author && (
-                          <>
-                            <span>{a.author}</span>
-                            <i />
-                          </>
+                      <a
+                        className="row-link"
+                        id={"row-" + a.id}
+                        href={readerUrl(
+                          collection,
+                          a.id,
+                          s.lastStage ?? "essence",
+                          live,
                         )}
-                        <span className="read-state">
-                          {!s.opened && <b />}
-                          {status(s)}
-                        </span>
-                        {s.saved && <Bookmark aria-label="Saved" size={13} />}
-                      </div>
-                    </a>
-                    <a
-                      className="quick-original"
-                      aria-label={"Read original of " + a.title}
-                      title="Read original"
-                      href={readerUrl(collection, a.id, "original", live)}
-                      onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                          return;
-                        e.preventDefault();
-                        open(a.id, "original");
-                      }}
-                    >
-                      <BookOpen />
-                    </a>
-                  </div>
+                        onClick={(e) => {
+                          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
+                            return;
+                          e.preventDefault();
+                          open(a.id, s.lastStage ?? "essence");
+                        }}
+                      >
+                        <div className="row-top">
+                          <span>{a.publication}</span>
+                          <time dateTime={a.published ?? a.received}>
+                            {dateLabel(a)}
+                          </time>
+                        </div>
+                        <h2>{a.title}</h2>
+                        <div className="row-bottom">
+                          {a.author && (
+                            <>
+                              <span>{a.author}</span>
+                              <i />
+                            </>
+                          )}
+                          <span className="read-state">
+                            {!s.opened && <b />}
+                            {status(s)}
+                          </span>
+                          {s.archived && (
+                            <Archive size={13} aria-label="Archived" />
+                          )}
+                          {(options.sort === "shortest" ||
+                            options.sort === "longest") && (
+                            <span>
+                              {a.wordCount === undefined
+                                ? "Length unknown"
+                                : a.wordCount + " words"}
+                            </span>
+                          )}
+                          {s.saved && <Bookmark aria-label="Saved" size={13} />}
+                        </div>
+                      </a>
+                      <a
+                        className="quick-original"
+                        aria-label={"Read original of " + a.title}
+                        title="Read original"
+                        href={readerUrl(collection, a.id, "original", live)}
+                        onClick={(e) => {
+                          if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
+                            return;
+                          e.preventDefault();
+                          open(a.id, "original");
+                        }}
+                      >
+                        <BookOpen />
+                      </a>
+                    </div>
+                  </Fragment>
                 ))}
                 {(page?.total ?? 0) > visible.length && (
                   <button
@@ -477,14 +568,18 @@ function Workspace({
                   <div className="empty">
                     <BookOpen />
                     <h2>
-                      {live && collection === "Inbox"
-                        ? "No articles in the inbox"
-                        : empty[collection][0]}
+                      {filtered(options)
+                        ? "No matching articles"
+                        : live && collection === "Inbox"
+                          ? "No articles in the inbox"
+                          : empty[collection][0]}
                     </h2>
                     <p>
-                      {live && collection === "Inbox"
-                        ? "Add a publication in Subscriptions to collect its articles."
-                        : empty[collection][1]}
+                      {filtered(options)
+                        ? "Try another search or clear your filters."
+                        : live && collection === "Inbox"
+                          ? "Add a publication in Subscriptions to collect its articles."
+                          : empty[collection][1]}
                     </p>
                   </div>
                 )}

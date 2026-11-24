@@ -1,7 +1,7 @@
 import Dexie, { type Table } from "dexie";
+import { indexEdition, tokens, buildCatalog } from "./search";
 import { adapt, fixtures } from "./fixtures";
 import {
-  articleListItem,
   initialState,
   stages,
   type ReadingState,
@@ -9,12 +9,11 @@ import {
   type ArticleListItem,
   type Stage,
   type SummaryStage,
-  type Collection,
-  belongs,
 } from "./model";
 export class Library extends Dexie {
   articles!: Table<Article, string>;
   articleList!: Table<ArticleListItem, string>;
+  searchTerms!: Table<{ id: string; terms: string[] }, string>;
   indexProgress!: Table<{ id: string; lastId?: string }, string>;
   states!: Table<ReadingState, string>;
   summaries!: Table<
@@ -40,12 +39,17 @@ export class Library extends Dexie {
         indexProgress: "id",
       })
       .upgrade((tx) => tx.table("indexProgress").add({ id: "articleList" }));
+    // v3 is the live subscriptions schema. Reset only the derived-index cursor.
+    this.version(4)
+      .stores({ searchTerms: "id, *terms" })
+      .upgrade((tx) => tx.table("indexProgress").put({ id: "articleList" }));
   }
   async indexNextBatch(): Promise<boolean> {
     return this.transaction(
       "rw",
       this.articles,
       this.articleList,
+      this.searchTerms,
       this.indexProgress,
       async () => {
         const cursor = await this.indexProgress.get("articleList");
@@ -56,7 +60,7 @@ export class Library extends Dexie {
             : this.articles.where("id").above(cursor.lastId);
         const batchSize = 64;
         const batch = await source.limit(batchSize).toArray();
-        await this.articleList.bulkPut(batch.map(articleListItem));
+        await this.indexEditions(batch);
         if (batch.length < batchSize) {
           await this.indexProgress.delete(cursor.id);
           return false;
@@ -76,52 +80,50 @@ export class Library extends Dexie {
       .between(["demo", Dexie.minKey], ["demo", Dexie.maxKey])
       .toArray();
   }
-  async collectionPage(
-    library: ArticleListItem["library"],
-    collection: Collection,
-    limit: number,
-    chosen?: string,
-  ) {
+  private async indexEditions(articles: Article[]) {
+    const editions = articles.map(indexEdition);
+    await this.articleList.bulkPut(editions.map((e) => e.list));
+    await this.searchTerms.bulkPut(editions.map((e) => e.posting));
+  }
+  async prepareIndexes() {
+    while (await this.indexNextBatch()) {
+      // Each committed batch is safe to resume in this or another tab.
+    }
+  }
+  searchCatalog(library: ArticleListItem["library"]) {
     return this.transaction("r", this.articleList, this.states, async () => {
-      const keys = await this.articleList
-        .where("[library+newestFirst]")
-        .between([library, Dexie.minKey], [library, Dexie.maxKey])
-        .primaryKeys();
-      const states = await this.states.bulkGet(keys);
-      const matching: string[] = [];
-      const byId = new Map<string, ReadingState>();
-      let unread = 0;
-      keys.forEach((id, i) => {
-        const s = states[i] ?? initialState(id);
-        byId.set(id, s);
-        if (belongs("Unread", s)) unread++;
-        if (belongs(collection, s)) matching.push(id);
-      });
-      const page = matching.slice(0, limit);
-      const selected = chosen ?? page[0];
-      const ids =
-        selected && byId.has(selected) && !page.includes(selected)
-          ? [...page, selected]
-          : page;
-      const records = await this.articleList.bulkGet(ids);
-      const rows = records.flatMap((a) =>
-        a ? [{ a, s: byId.get(a.id)! }] : [],
-      );
-      return {
-        collection,
-        chosen,
-        rows: rows.slice(0, page.length),
-        selected: rows.find((r) => r.a.id === selected),
-        total: matching.length,
-        unread,
-      };
+      const [articles, states] = await Promise.all([
+        this.articleList
+          .where("[library+newestFirst]")
+          .between([library, Dexie.minKey], [library, Dexie.maxKey])
+          .toArray(),
+        this.states.toArray(),
+      ]);
+      return buildCatalog(articles, states);
     });
+  }
+  matchingTerms(text: string) {
+    const words = [...new Set(tokens(text))];
+    if (!words.length && text.trim())
+      return Promise.resolve([new Set<string>()]);
+    return Promise.all(
+      words.map(
+        async (word) =>
+          new Set(
+            await this.searchTerms
+              .where("terms")
+              .startsWith(word)
+              .primaryKeys(),
+          ),
+      ),
+    );
   }
   async deliver(articles: Article[], { onlyMissing = false } = {}) {
     await this.transaction(
       "rw",
       this.articles,
       this.articleList,
+      this.searchTerms,
       this.states,
       this.summaries,
       async () => {
@@ -129,7 +131,7 @@ export class Library extends Dexie {
           const previous = await this.articles.get(article.id);
           if (previous && onlyMissing) {
             // A rolled-back v1 reader can seed an article without its v2 index row.
-            await this.articleList.put(articleListItem(previous));
+            await this.indexEditions([previous]);
             continue;
           }
           if (
@@ -142,7 +144,7 @@ export class Library extends Dexie {
           // Opening another tab with the same edition should leave active readers alone.
           if (JSON.stringify(previous) !== JSON.stringify(article)) {
             await this.articles.put(article);
-            await this.articleList.put(articleListItem(article));
+            await this.indexEditions([article]);
           }
           if (!(await this.states.get(article.id)))
             await this.states.add(initialState(article.id));
@@ -179,9 +181,7 @@ export async function seedLibrary(library = db) {
     throw new Error(
       "Open the demo on localhost or HTTPS so this browser can prepare the local library.",
     );
-  while (await library.indexNextBatch()) {
-    // A new transaction resumes at the last committed article ID.
-  }
+  await library.prepareIndexes();
   const existing = new Set(
     await library.articleList
       .where("id")

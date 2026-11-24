@@ -1,3 +1,4 @@
+import { largeLibrary } from "./search/journey.ts";
 import { verifyPortability } from "./opml/journey.ts";
 // Runs only against an explicitly supplied Android emulator running Chrome.
 import { _android as android, expect } from "@playwright/test";
@@ -144,6 +145,13 @@ try {
     await subscriptionPage.close();
     forward(upgraded.port, false);
     await upgraded.close();
+  }
+  const searchPage = await context.newPage();
+  try {
+    await largeLibrary(searchPage, "http://localhost:4173", true);
+    console.log("Android offline inbox search and navigation passed");
+  } finally {
+    await searchPage.close();
   }
   if (process.env.READING_BOX_LIVE_REVIEW === "1")
     await publicReview(context, "android", forward);
