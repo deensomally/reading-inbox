@@ -32,7 +32,13 @@ jobs:
       - run: npm ci
       - run: npm run format:check
       - run: npm run lint
-      - run: npm run test:unit
+      - if: runner.os != 'Windows'
+        run: npm run test:unit
+      # Keep file-backed SQLite and service-restart suites from competing for
+      # the same Windows runner. Each test still has its original time limit.
+      - name: Run Windows unit and integration tests
+        if: runner.os == 'Windows'
+        run: npm run test:unit -- --no-file-parallelism
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - run: npm run test:e2e -- --project=${{ matrix.project }} --workers=1
