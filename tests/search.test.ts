@@ -152,20 +152,18 @@ it("atomically replaces old terms and verified length on text edits, rights loss
 });
 it("resumes an offline M5 upgrade and restores missing publisher topics in one server replay", async () => {
   const old = new Dexie(db.name);
-  old
-    .version(3)
-    .stores({
-      articles: "id",
-      articleList: "id,[library+newestFirst]",
-      states: "id",
-      positions: "id",
-      summaries: "key,articleId",
-      meta: "id",
-      indexProgress: "id",
-      subscriptions: "id",
-      checkpoint: "id",
-      outbox: "++seq",
-    });
+  old.version(3).stores({
+    articles: "id",
+    articleList: "id,[library+newestFirst]",
+    states: "id",
+    positions: "id",
+    summaries: "key,articleId",
+    meta: "id",
+    indexProgress: "id",
+    subscriptions: "id",
+    checkpoint: "id",
+    outbox: "++seq",
+  });
   const oldArticles = Array.from({ length: 129 }, (_, i) => ({
     id: "rss-" + i,
     title: "Chart " + i,
