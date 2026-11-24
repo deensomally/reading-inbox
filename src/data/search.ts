@@ -98,6 +98,7 @@ export function buildCatalog(
 ) {
   const reading = new Map(states.map((s) => [s.id, s]));
   const rows = new Map<string, Row>();
+  const needsIndex = new Set<string>();
   const publications = new Map<string, Set<string>>(),
     topics = new Map<string, Set<string>>();
   const status = {
@@ -108,7 +109,13 @@ export function buildCatalog(
     archived: new Set<string>(),
   };
   let inboxUnread = 0;
-  for (const a of articles) {
+  for (let a of articles) {
+    // A still-open M5 window can deliver after the schema migration. Show
+    // its metadata immediately, but withhold stale postings until repaired.
+    if (!Array.isArray(a.topics)) {
+      needsIndex.add(a.id);
+      a = { ...a, topics: [], wordCount: undefined };
+    }
     const s = reading.get(a.id) ?? initialState(a.id);
     rows.set(a.id, { a, s });
     membership(publications, a.publication, a.id);
@@ -119,7 +126,7 @@ export function buildCatalog(
     if (!s.opened && !s.archived) inboxUnread++;
     if (s.saved) status.saved.add(a.id);
   }
-  return { rows, publications, topics, status, inboxUnread };
+  return { rows, publications, topics, status, inboxUnread, needsIndex };
 }
 export type SearchCatalog = ReturnType<typeof buildCatalog>;
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -178,13 +185,25 @@ function candidates(
   sets.sort((a, b) => a.size - b.size);
   const [smallest, ...others] = sets;
   if (!smallest) return c.rows;
-  if (!others.length) return smallest;
+  const skipUnindexed = terms.length > 0 && c.needsIndex.size > 0;
+  if (!others.length && !skipUnindexed) return smallest;
   const ids = new Set<string>();
   for (const id of smallest) {
-    if (others.every((set) => set.has(id))) ids.add(id);
+    if (
+      (!skipUnindexed || !c.needsIndex.has(id)) &&
+      others.every((set) => set.has(id))
+    )
+      ids.add(id);
   }
   return ids;
 }
+export interface PublicationPage {
+  name: string;
+  total: number;
+  limit: number;
+  rows: Row[];
+}
+export const pageSize = 40;
 export function resultPage(
   c: SearchCatalog,
   collection: Collection,
@@ -193,26 +212,44 @@ export function resultPage(
   limit: number,
   chosen?: string,
   ordered = orderedRows(c, o.sort, o.grouped),
+  groupLimits?: Map<string, number>,
 ) {
   const ids = candidates(c, collection, o, terms);
-  let rows: Row[] = [];
-  // Common terms already have a count. Walk the chosen order only until the
-  // page is full. For sparse matches, visit and sort only their postings.
-  if (ids.size > c.rows.size / 4) {
-    for (const row of ordered) {
-      if (ids.has(row.a.id)) rows.push(row);
-      if (rows.length === limit) break;
-    }
-  } else {
+  const rows: Row[] = [];
+  const groups: PublicationPage[] = [];
+  // Sparse queries visit only matching postings. Common queries reuse the
+  // warm sort order and ungrouped queries stop when the page is full.
+  const sparse = ids.size <= c.rows.size / 4;
+  let source = ordered;
+  if (sparse) {
+    source = [];
     for (const id of ids.keys()) {
       const row = c.rows.get(id);
-      if (row) rows.push(row);
+      if (row) source.push(row);
     }
-    rows.sort((x, y) => order(x.a, y.a, o));
-    rows = rows.slice(0, limit);
+    source.sort((x, y) => order(x.a, y.a, o));
+  }
+  let group: PublicationPage | undefined;
+  for (const row of source) {
+    if (!sparse && !ids.has(row.a.id)) continue;
+    if (o.grouped && groupLimits) {
+      // Count all matches even when only a heading is visible. Each open
+      // publication has its own page; no previous group consumes its budget.
+      const name = row.a.publication;
+      if (group?.name !== name) {
+        const limit = groupLimits.get(name) ?? (groups.length ? 0 : pageSize);
+        group = { name, total: 0, limit, rows: [] };
+        groups.push(group);
+      }
+      if (++group.total > group.limit) continue;
+      group.rows.push(row);
+    }
+    rows.push(row);
+    if (!group && rows.length === limit) break;
   }
   return {
     collection,
+    groups,
     text: o.text,
     rows,
     total: ids.size,

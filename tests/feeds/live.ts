@@ -3,7 +3,9 @@ import { feedApp } from "../../service/app.ts";
 
 // Optional smoke test. Uses real DNS, TLS, robots and publisher responses.
 // Its disposable database is separate from the owner's library.
+import { debianReview } from "../../shared/reviewed-article.ts";
 const sources = [
+  ["Bits from Debian", debianReview.feed],
   ["Creative Commons RSS", "https://creativecommons.org/feed/"],
   [
     "USGS Atom",
@@ -30,6 +32,8 @@ try {
     }
     let next: string | null = null;
     const coverage: Record<string, number> = {};
+    const unavailable: Record<string, number> = {};
+    let candidates = 0;
     let count = 0;
     do {
       const path: string =
@@ -38,12 +42,21 @@ try {
       if (page.statusCode !== 200)
         throw new Error("Could not read the smoke-test catalog.");
       const resultPage: {
-        items: { feedId: string; coverage: string }[];
+        items: {
+          feedId: string;
+          coverage: string;
+          permissions: { display: boolean };
+          reason: string;
+          pageCandidate?: unknown;
+        }[];
         nextCursor: string | null;
       } = page.json();
       for (const entry of resultPage.items) {
         if (entry.feedId !== result.subscription.id) continue;
         count++;
+        if (entry.pageCandidate) candidates++;
+        if (!entry.permissions.display)
+          unavailable[entry.reason] = (unavailable[entry.reason] ?? 0) + 1;
         coverage[entry.coverage] = (coverage[entry.coverage] ?? 0) + 1;
       }
       next = resultPage.nextCursor;
@@ -54,6 +67,10 @@ try {
         count +
         " observed; coverage " +
         JSON.stringify(coverage) +
+        "; unavailable by reason " +
+        JSON.stringify(unavailable) +
+        "; eligible pages " +
+        candidates +
         "; " +
         result.subscription.url,
     );

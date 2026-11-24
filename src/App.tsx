@@ -43,11 +43,14 @@ import {
   filtered,
   resultPage,
   orderedRows,
-  sortOptions,
+  pageSize,
+  type Row,
   type SearchOptions,
 } from "./data/search";
 import { InboxRow } from "./components/InboxRow";
-import { InboxControls } from "./components/InboxControls";
+import { AppUpdate } from "./components/AppUpdate";
+import { PublicationGroup } from "./components/PublicationGroup";
+import { InboxControls, SortOrder } from "./components/InboxControls";
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
   Inbox: ["Your inbox is clear", "Archived articles are available in Archive."],
@@ -94,10 +97,15 @@ export default function App() {
   } catch {
     /* The demo also works with preferences disabled. */
   }
-  return route(hash).live || (!hash && lastLive) ? (
-    <LiveWorkspace hash={hash} />
-  ) : (
-    <Workspace hash={hash} library={db} />
+  return (
+    <>
+      <AppUpdate reading={!!route(hash).id} />
+      {route(hash).live || (!hash && lastLive) ? (
+        <LiveWorkspace hash={hash} />
+      ) : (
+        <Workspace hash={hash} library={db} />
+      )}
+    </>
   );
 }
 function LiveWorkspace({ hash }: { hash: string }) {
@@ -153,7 +161,10 @@ function Workspace({
   const [text, setText] = useState(() => context?.options.text ?? "");
   const options = useMemo(() => ({ ...filters, text }), [filters, text]);
   const [manage, setManage] = useState(false);
-  const [limit, setLimit] = useState(() => context?.limit ?? 40);
+  const [limit, setLimit] = useState(() => context?.limit ?? pageSize);
+  const [groupLimits, setGroupLimits] = useState<Map<string, number>>(
+    () => context?.groupLimits ?? new Map(),
+  );
   const [loaded, setLoaded] = useState(false);
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [failure, setFailure] = useState("");
@@ -192,6 +203,16 @@ function Workspace({
         : undefined,
     [loaded, library, live],
   );
+  useEffect(() => {
+    if (catalog?.needsIndex.size)
+      void library
+        .repairLegacyRows(catalog.needsIndex)
+        .catch(() =>
+          setFailure(
+            "The local search index could not be updated. Reload to try again.",
+          ),
+        );
+  }, [catalog, library]);
   const matches = useLiveQuery(
     async () =>
       loaded ? { text, terms: await library.matchingTerms(text) } : undefined,
@@ -212,15 +233,17 @@ function Workspace({
             limit,
             id,
             ordered,
+            groupLimits,
           )
         : undefined,
-    [catalog, matches, ordered, collection, filters, limit, id],
+    [catalog, matches, ordered, collection, filters, limit, id, groupLimits],
   );
   function changeOptions({ text, ...patch }: Partial<SearchOptions>) {
     if (text !== undefined) setText(text);
     if (Object.keys(patch).length)
       setFilters((previous) => ({ ...previous, ...patch }));
-    setLimit(40);
+    setLimit(pageSize);
+    setGroupLimits((previous) => (previous.size ? new Map() : previous));
     if (list.current) list.current.scrollTop = 0;
   }
   function clearOptions() {
@@ -294,12 +317,24 @@ function Workspace({
       readerUrl(collection, articleId, s, live),
       !!id,
       !id || !!history.state?.fromList,
-      { library: library.name, collection, options, limit },
+      { library: library.name, collection, options, limit, groupLimits },
     );
   }
   function back() {
     if (history.state?.fromList) history.back();
     else navigate(listUrl(collection, live), true);
+  }
+  function renderRow(row: Row) {
+    return (
+      <InboxRow
+        key={row.a.id}
+        row={row}
+        selected={row.a.id === current?.a.id}
+        live={live}
+        collection={collection}
+        showLength={options.sort === "shortest" || options.sort === "longest"}
+      />
+    );
   }
   const layoutReady = ready && !failure;
   return (
@@ -455,9 +490,10 @@ function Workspace({
                           " " +
                           (page?.total === 1 ? "article" : "articles")}
                   </span>
-                  <span>
-                    <ArrowDownWideNarrow /> {sortOptions[options.sort]}
-                  </span>
+                  <div className="quick-sort">
+                    <ArrowDownWideNarrow aria-hidden="true" />
+                    <SortOrder sort={options.sort} change={changeOptions} />
+                  </div>
                 </div>
                 {catalog && matches && (
                   <InboxControls
@@ -507,31 +543,30 @@ function Workspace({
                   }
                 }}
               >
-                {visible.map((row, i) => (
-                  <InboxRow
-                    key={row.a.id}
-                    row={row}
-                    selected={row.a.id === current?.a.id}
-                    live={live}
-                    collection={collection}
-                    group={
-                      options.grouped &&
-                      visible[i - 1]?.a.publication !== row.a.publication
-                    }
-                    showLength={
-                      options.sort === "shortest" || options.sort === "longest"
-                    }
-                  />
-                ))}
-                {(page?.total ?? 0) > visible.length && (
+                {options.grouped
+                  ? page?.groups.map((group) => (
+                      <PublicationGroup
+                        key={group.name}
+                        group={group}
+                        resize={(size) =>
+                          setGroupLimits((previous) =>
+                            new Map(previous).set(group.name, size),
+                          )
+                        }
+                      >
+                        {group.rows.map(renderRow)}
+                      </PublicationGroup>
+                    ))
+                  : visible.map(renderRow)}
+                {!options.grouped && (page?.total ?? 0) > visible.length && (
                   <button
                     className="secondary load-more"
-                    onClick={() => setLimit((n) => n + 40)}
+                    onClick={() => setLimit((n) => n + pageSize)}
                   >
                     Show more articles
                   </button>
                 )}
-                {!visible.length && (
+                {page?.total === 0 && (
                   <div className="empty">
                     <BookOpen />
                     <h2>

@@ -13,7 +13,7 @@ Reading Box collects public feeds on your PC. The Subscriptions inbox opens its 
    npm.cmd run reading-box
    ```
 
-2. Open `http://localhost:4173/#/subscriptions/inbox` in Edge or Chrome. If you previously used port 5173, set `$env:READING_BOX_READER_PORT = '5173'` before starting and use 5173 in the address. **Keep your original browser profile, hostname and port to retain access to your existing demo and appearance.**
+2. Open the printed reader address (normally `http://localhost:4173/api/open.html`) in Brave, Edge or Chrome. If you previously used port 5173, set `$env:READING_BOX_READER_PORT = '5173'` before starting and use 5173 in the address. **Keep your original browser profile, hostname and port to retain access to your existing demo and appearance.**
 3. In a second PowerShell window in the same folder, run the following command.
 
    ```powershell
@@ -67,7 +67,7 @@ adb reverse tcp:4173 tcp:4173
 npm.cmd run feeds -- pair android
 ```
 
-Open `http://localhost:4173/#/subscriptions/inbox` in **Chrome on the phone** and enter the Android profile’s code. The USB tunnel forwards only the reader port. The reader proxies authenticated API requests to the feed service on PC loopback. Both servers bind to `127.0.0.1`. There is no LAN listener or firewall opening needed. Chrome can install the PWA from device loopback. Remove the tunnel afterward with `adb reverse --remove tcp:4173`. The phone can read retained data offline, and catches up the next time its tunnel and collector are available. Physical phone, Narrator and TalkBack checks remain hands-on tests.
+Open `http://localhost:4173/api/open.html` in **Chrome on the phone** and enter the Android profile’s code. The USB tunnel forwards only the reader port. The reader proxies authenticated API requests to the feed service on PC loopback. Both servers bind to `127.0.0.1`. There is no LAN listener or firewall opening needed. Chrome can install the PWA from device loopback. Remove the tunnel afterward with `adb reverse --remove tcp:4173`. The phone can read retained data offline, and catches up the next time its tunnel and collector are available. Physical phone, Narrator and TalkBack checks remain hands-on tests.
 
 ## Browser security and local storage
 

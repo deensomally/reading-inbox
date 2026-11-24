@@ -10,6 +10,7 @@ import { readProofs } from "../../service/config.ts";
 import { publisher, fixture, rss, item, example } from "../feeds/publisher.ts";
 import { addNotebook, sourceOrigin, riverProof } from "../originals/source.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
+import { feedProxyPath } from "../../shared/reader-launch.ts";
 export async function ownerPreview(
   usePublicNetwork = false,
   readerDirectory = "dist",
@@ -46,7 +47,10 @@ export async function ownerPreview(
       host: "127.0.0.1",
       port: 0,
       proxy: {
-        "/api": { target: "http://127.0.0.1:" + apiPort, changeOrigin: false },
+        [feedProxyPath]: {
+          target: "http://127.0.0.1:" + apiPort,
+          changeOrigin: false,
+        },
       },
     },
   });

@@ -7,6 +7,7 @@ import {
   subscriptionUpgradePreview,
   upgradePreview,
 } from "./upgrade/preview.ts";
+import { verifyWorkerUpdate } from "./upgrade/worker.ts";
 import { verifyUpgrade } from "./upgrade/journey.ts";
 import { verifySubscriptionUpgrade } from "./upgrade/subscriptions.ts";
 import { ownerPreview } from "./owner/preview.ts";
@@ -145,6 +146,19 @@ try {
     await subscriptionPage.close();
     forward(upgraded.port, false);
     await upgraded.close();
+  }
+  const previousWorker = await subscriptionUpgradePreview("milestone5");
+  const readingPage = await context.newPage();
+  try {
+    forward(previousWorker.port, true);
+    await verifyWorkerUpdate(readingPage, previousWorker);
+    console.log(
+      "Android Milestone 5 worker update with an open Original passed",
+    );
+  } finally {
+    await readingPage.close();
+    forward(previousWorker.port, false);
+    await previousWorker.close();
   }
   const searchPage = await context.newPage();
   try {

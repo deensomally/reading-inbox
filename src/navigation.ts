@@ -31,6 +31,7 @@ export interface ListContext {
   collection: Collection;
   options: SearchOptions;
   limit: number;
+  groupLimits?: Map<string, number>;
 }
 export function navigate(
   hash: string,

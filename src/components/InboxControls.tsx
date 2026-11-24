@@ -11,6 +11,33 @@ import {
   type SearchOptions,
 } from "../data/search";
 
+export function SortOrder({
+  id,
+  sort,
+  change,
+}: {
+  id?: string;
+  sort: SearchOptions["sort"];
+  change: (o: Partial<SearchOptions>) => void;
+}) {
+  return (
+    <select
+      id={id}
+      aria-label={id ? undefined : "Inbox sort order"}
+      value={sort}
+      onChange={(e) =>
+        change({ sort: e.target.value as SearchOptions["sort"] })
+      }
+    >
+      {Object.entries(sortOptions).map(([value, label]) => (
+        <option key={value} value={value}>
+          {label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function InboxControls({
   options,
   change,
@@ -132,19 +159,11 @@ export function InboxControls({
             </div>
             <div>
               <label htmlFor="filter-sort-order">Sort order</label>
-              <select
+              <SortOrder
                 id="filter-sort-order"
-                value={options.sort}
-                onChange={(e) =>
-                  change({ sort: e.target.value as SearchOptions["sort"] })
-                }
-              >
-                {Object.entries(sortOptions).map(([v, label]) => (
-                  <option key={v} value={v}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                sort={options.sort}
+                change={change}
+              />
             </div>
             <label className="group-filter">
               <input

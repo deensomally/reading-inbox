@@ -31,7 +31,7 @@ async function seed(page: Page) {
             sourceKey: suffix,
             bodyHash: suffix,
             title: "Dispatch " + suffix,
-            publication: "Journal " + (i % 8),
+            publication: "Journal " + (i % 8 === 7 && i !== 7 ? 1 : i % 8),
             author: "Reporter " + (i % 17),
             topics: i % 3 ? ["Rivers"] : [],
             published: i % 4 ? date : undefined,
@@ -179,6 +179,49 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
     const filters = page.getByRole("button", {
       name: "Filter and sort articles",
     });
+    // One publication has 2,499 matches, its neighbour has 1,250 and
+    // the last has a single match. All headings have independent pages.
+    await filters.click();
+    const grouping = page.getByRole("dialog");
+    await grouping.getByLabel("Group by publication").check();
+    await grouping.getByRole("button", { name: "Show 10000 articles" }).click();
+    const group = (name: string) =>
+      page.getByRole("button", { name, exact: true });
+    const first = group("Journal 0 1,250 articles");
+    const big = group("Journal 1 2,499 articles");
+    const next = group("Journal 2 1,250 articles");
+    const last = group("Journal 7 1 article");
+    await expect(page.locator(".publication-group")).toHaveCount(8);
+    await expect(page.locator(".row-link")).toHaveCount(40);
+    async function toggle(button: typeof first) {
+      if (touch) await button.tap();
+      else {
+        await button.focus();
+        await button.press("Space");
+      }
+    }
+    await toggle(first);
+    await expect(big).toBeInViewport();
+    await toggle(big);
+    await page
+      .getByRole("button", { name: "Show more from Journal 1" })
+      .click();
+    await expect(page.locator(".row-link")).toHaveCount(80);
+    await toggle(big);
+    await expect(next).toBeInViewport();
+    await expect(page.locator(".row-link")).toHaveCount(0);
+    await toggle(last);
+    await expect(page.locator(".row-link")).toHaveCount(1);
+    await page.locator(".row-link").click();
+    await expect(
+      page.getByRole("button", { name: "Back to list" }),
+    ).toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Back to list" }).click();
+    await expect(last).toHaveAttribute("aria-expanded", "true");
+    await expect(first).toHaveAttribute("aria-expanded", "false");
+    await expect(big).toHaveAttribute("aria-expanded", "false");
+    await expect(page.locator(".row-link")).toBeFocused();
     await filters.click();
     const dialog = page.getByRole("dialog");
     await dialog

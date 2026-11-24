@@ -85,6 +85,28 @@ export class Library extends Dexie {
     await this.articleList.bulkPut(editions.map((e) => e.list));
     await this.searchTerms.bulkPut(editions.map((e) => e.posting));
   }
+  async repairLegacyRows(ids: Set<string>) {
+    const pending = [...ids];
+    for (let i = 0; i < pending.length; i += 64) {
+      await this.transaction(
+        "rw",
+        this.articles,
+        this.articleList,
+        this.searchTerms,
+        async () => {
+          // Recheck under the write lock in case another tab already delivered
+          // a newer edition. Only the two derived search stores are updated.
+          const rows = await this.articleList.bulkGet(pending.slice(i, i + 64));
+          const stale = rows.flatMap((row) =>
+            row && !Array.isArray(row.topics) ? [row.id] : [],
+          );
+          if (!stale.length) return;
+          const articles = await this.articles.bulkGet(stale);
+          await this.indexEditions(articles.filter((a) => a !== undefined));
+        },
+      );
+    }
+  }
   async prepareIndexes() {
     while (await this.indexNextBatch()) {
       // Each committed batch is safe to resume in this or another tab.

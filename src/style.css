@@ -255,7 +255,7 @@ svg {
 .row-top {
   justify-content: space-between;
 }
-.list-meta > span:last-child {
+.quick-sort {
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -1357,11 +1357,56 @@ textarea {
   justify-content: space-between;
   flex-wrap: wrap;
 }
-.publication-group {
+.quick-sort select {
+  background: var(--paper);
+  color: var(--ink);
+  border: 0;
+  font: inherit;
+  min-height: 2rem;
+  cursor: pointer;
+}
+.group-heading {
+  margin: 0;
+}
+.group-heading button {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 2.75rem;
   background: var(--linen);
-  padding: 0.75rem 1.15rem;
+  color: var(--ink);
+  padding: 0.65rem 1.15rem;
+  border: 0;
   border-bottom: 1px solid var(--rule);
   font:
-    500 0.85rem "DM Sans",
+    500 0.9rem "DM Sans",
     sans-serif;
+  text-align: start;
+}
+.group-heading button:focus-visible {
+  outline-offset: -3px;
+}
+.group-heading button[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+.publication-group {
+  overflow-wrap: anywhere;
+}
+.group-count {
+  color: var(--muted);
+  margin-inline-start: auto;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+.app-update {
+  position: fixed;
+  inset: auto 1rem 1rem auto;
+  z-index: 3;
+  display: grid;
+  padding: 0.35rem 0.8rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
 }

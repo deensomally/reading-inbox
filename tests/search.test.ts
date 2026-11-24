@@ -254,3 +254,87 @@ it("matches reference ordering across page boundaries, groups and updates", asyn
     }
   }
 });
+
+it("counts complete matching publication groups and pages only expanded rows", async () => {
+  const entries = Array.from({ length: 130 }, (_, n) => ({
+    ...first,
+    id: String(n).padStart(3, "0"),
+    publication: n < 124 ? "Almanac" : "Bulletin",
+    topics: [n % 3 === 0 ? "Maps" : "Rivers"],
+  }));
+  await commit(entries);
+  const catalog = await db.searchCatalog("subscriptions");
+  const grouped = (
+    groupLimits: Map<string, number>,
+    topic: string | null = null,
+  ) =>
+    resultPage(
+      catalog,
+      "Inbox",
+      { ...defaults, grouped: true, topic },
+      [],
+      40,
+      undefined,
+      undefined,
+      groupLimits,
+    );
+  const initial = grouped(new Map());
+  expect(initial.groups.map((g) => [g.name, g.total, g.rows.length])).toEqual([
+    ["Almanac", 124, 40],
+    ["Bulletin", 6, 0],
+  ]);
+  const after = grouped(
+    new Map([
+      ["Almanac", 0],
+      ["Bulletin", 40],
+    ]),
+    "Maps",
+  );
+  expect(after.total).toBe(44);
+  expect(after.groups.map((g) => [g.name, g.total, g.rows.length])).toEqual([
+    ["Almanac", 42, 0],
+    ["Bulletin", 2, 2],
+  ]);
+  expect(ids(after)).toEqual(["126", "129"]);
+});
+
+it("repairs only legacy list rows after an open M5 tab edits a body or withdraws its rights", async () => {
+  await commit([first, { ...first, id: "b" }]);
+  await db.changeFlag("rss-a", "saved");
+  const updated = {
+    ...(await db.articles.get("rss-a"))!,
+    blocks: [{ kind: "paragraph" as const, text: "New manuscript" }],
+  };
+  const restricted = {
+    ...(await db.articles.get("rss-b"))!,
+    coverage: "missing" as const,
+    blocks: [],
+    permissions: {
+      display: false,
+      retain: false,
+      copy: false,
+      summarise: false,
+    },
+  };
+  await db.articles.bulkPut([updated, restricted]);
+  // These releases wrote primary articles and a projection with no topic
+  // column. They knew nothing about the separately persisted search postings.
+  for (const article of [updated, restricted]) {
+    const old = { ...(await db.articleList.get(article.id))! };
+    Reflect.deleteProperty(old, "topics");
+    Reflect.deleteProperty(old, "wordCount");
+    await db.articleList.put(old);
+  }
+  const catalog = await db.searchCatalog("subscriptions");
+  expect([...catalog.needsIndex].sort()).toEqual(["rss-a", "rss-b"]);
+  expect(ids(await page({ text: "moonstone" }))).toEqual([]);
+  expect((await page()).total).toBe(2);
+  await db.repairLegacyRows(catalog.needsIndex);
+  expect((await db.searchCatalog("subscriptions")).needsIndex.size).toBe(0);
+  expect(ids(await page({ text: "manuscript", saved: true }))).toEqual(["a"]);
+  expect(
+    (await page({ sort: "longest" })).rows.map((row) => row.a.wordCount),
+  ).toEqual([2, undefined]);
+  expect((await db.matchingTerms("moonstone"))[0].size).toBe(0);
+  expect(await db.articles.get("rss-a")).toEqual(updated);
+});

@@ -40,3 +40,45 @@ test("10,000 local articles support warm search, scrolling and Back with filters
   test.setTimeout(220000);
   await largeLibrary(page, baseURL!, isMobile);
 });
+
+test("the inbox and dialog share all four sort orders and put unknown lengths after verified Originals", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const quick = page.getByRole("combobox", { name: "Inbox sort order" });
+  await expect(quick).toHaveValue("newest");
+  await quick.selectOption("oldest");
+  const filters = page.getByRole("button", {
+    name: "Filter and sort articles",
+  });
+  await filters.click();
+  const menu = page.getByRole("dialog");
+  const select = menu.getByLabel("Sort order", { exact: true });
+  await expect(select).toHaveValue("oldest");
+  await select.selectOption("shortest");
+  await menu.getByRole("button", { name: "Show 8 articles" }).click();
+  const rows = page.locator(".row-bottom");
+  for (const order of ["shortest", "longest"]) {
+    if (order === "longest") await quick.selectOption(order);
+    await expect(quick).toHaveValue(order);
+    await expect(rows.first()).toContainText("Verified");
+    const lengths = (await rows.allTextContents()).map((text) => {
+      if (text.includes("Length unknown")) return null;
+      return Number(
+        /Verified · ([\d,]+) words?/.exec(text)![1].replaceAll(",", ""),
+      );
+    });
+    const known = lengths.filter((n): n is number => n !== null);
+    expect(new Set(known).size).toBeGreaterThan(1);
+    expect(known.length).toBeLessThan(8);
+    expect(lengths).toEqual([
+      ...known.sort((a, b) => (order === "shortest" ? a - b : b - a)),
+      ...Array(8 - known.length).fill(null),
+    ]);
+  }
+  await filters.click();
+  await expect(select).toHaveValue("longest");
+  await select.selectOption("newest");
+  await menu.getByRole("button", { name: "Show 8 articles" }).click();
+  await expect(quick).toHaveValue("newest");
+});

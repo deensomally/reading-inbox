@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Upgrade tests build the released Phase 1 and Milestone 3 readers.
+          fetch-depth: 0 # Upgrade tests build the released Phase 1, Milestone 3 and Milestone 5 readers.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -42,7 +42,7 @@ jobs:
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - run: npm run test:e2e -- --project=${{ matrix.project }} --workers=1
-      - name: Test the Milestone 3 browser upgrade in Windows Brave
+      - name: Test production upgrades in Windows Brave
         if: matrix.channel == 'chrome'
         shell: pwsh
         run: |
@@ -53,8 +53,8 @@ jobs:
             $env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles $bravePath
           }
           (Get-Item -LiteralPath $env:READER_BROWSER_EXECUTABLE -ErrorAction Stop).VersionInfo.ProductVersion
-          npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint"
-      - name: Sample three live publishers with the local service
+          npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint|Milestone 5 worker"
+      - name: Sample live publishers with the local service
         if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
         continue-on-error: true # The deterministic publisher tests above are required on every PR.
         run: npm run test:feeds:live

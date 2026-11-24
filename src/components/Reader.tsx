@@ -404,6 +404,12 @@ export function Reader({
                 <div className="section-label">Publisher edition</div>
                 <h2>{coverageLabel}</h2>
                 <p>{a.reason}</p>
+                {a.checkPage && !a.pageUrl && (
+                  <p>
+                    Open Original while connected to check the eligible
+                    publisher page.
+                  </p>
+                )}
                 <button
                   className="secondary"
                   onClick={() => onStage("original")}
@@ -533,6 +539,9 @@ export function Reader({
                   <>
                     <div className="notice">
                       <strong>Article text unavailable</strong>
+                      {live && a.checkPage && offline && (
+                        <p>Reconnect to check the eligible publisher page.</p>
+                      )}
                       {live && a.coverage === "unverified" && (
                         <p>Completeness unverified.</p>
                       )}
