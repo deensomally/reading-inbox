@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { feedProxyPath } from "./shared/reader-launch";
 export default defineConfig({
   server: {
     proxy: {
-      "/api": {
+      [feedProxyPath]: {
         target: "http://127.0.0.1:" + (process.env.READING_BOX_PORT || "4318"),
         changeOrigin: false,
       },
@@ -54,7 +55,7 @@ export default defineConfig({
     },
     VitePWA({
       registerType: "prompt",
-      injectRegister: "script",
+      injectRegister: false,
       manifest: {
         name: "Reading Box",
         short_name: "Reading Box",
@@ -76,5 +77,8 @@ export default defineConfig({
       },
     }),
   ],
-  build: { license: true },
+  build: {
+    license: true,
+    rollupOptions: { input: ["index.html", "api/open.html"] },
+  },
 });

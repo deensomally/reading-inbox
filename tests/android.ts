@@ -1,3 +1,4 @@
+import { largeLibrary } from "./search/journey.ts";
 import { verifyPortability } from "./opml/journey.ts";
 // Runs only against an explicitly supplied Android emulator running Chrome.
 import { _android as android, expect } from "@playwright/test";
@@ -6,6 +7,7 @@ import {
   subscriptionUpgradePreview,
   upgradePreview,
 } from "./upgrade/preview.ts";
+import { verifyWorkerUpdate } from "./upgrade/worker.ts";
 import { verifyUpgrade } from "./upgrade/journey.ts";
 import { verifySubscriptionUpgrade } from "./upgrade/subscriptions.ts";
 import { ownerPreview } from "./owner/preview.ts";
@@ -144,6 +146,26 @@ try {
     await subscriptionPage.close();
     forward(upgraded.port, false);
     await upgraded.close();
+  }
+  const previousWorker = await subscriptionUpgradePreview("milestone5");
+  const readingPage = await context.newPage();
+  try {
+    forward(previousWorker.port, true);
+    await verifyWorkerUpdate(readingPage, previousWorker);
+    console.log(
+      "Android Milestone 5 worker update with an open Original passed",
+    );
+  } finally {
+    await readingPage.close();
+    forward(previousWorker.port, false);
+    await previousWorker.close();
+  }
+  const searchPage = await context.newPage();
+  try {
+    await largeLibrary(searchPage, "http://localhost:4173", true);
+    console.log("Android offline inbox search and navigation passed");
+  } finally {
+    await searchPage.close();
   }
   if (process.env.READING_BOX_LIVE_REVIEW === "1")
     await publicReview(context, "android", forward);

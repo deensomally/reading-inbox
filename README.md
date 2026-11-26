@@ -4,6 +4,8 @@ A local-first reading PWA for Android and Windows. Phase 1 includes eight fictio
 
 The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
 
+Milestone 6 adds offline search, publication and topic filters, independent status filters, length sorting and publication groups. [Test inbox search on Windows](docs/SEARCH_INBOX.md)
+
 Milestone 5 adds OPML 2.0 import previews, nested folders and active subscription exports. [Test portable subscriptions on Windows](docs/PORTABLE_SUBSCRIPTIONS.md)
 
 Milestone 4 adds on-demand, permission-checked publisher originals with structured text, licensed figures, offline copy and publisher handoffs. [Test faithful originals on Windows and Android](docs/FAITHFUL_ORIGINALS.md)
@@ -49,7 +51,7 @@ To try a prebuilt copy, download **reading-box-preview** from the PR’s success
 
 On **Windows**, open `http://localhost:4173` in Edge or Chrome. Use the browser’s install-app command. After the first online load, the service worker caches the shell, bundled fonts, article assets and local mock inputs. Reload once before disconnecting. The installed app can reopen offline and serve previously unrequested fixture depths.
 
-On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-connected test phone with Android platform tools and USB debugging enabled, run `adb reverse tcp:4173 tcp:4173` on the computer and open `http://localhost:4173` on the phone. Chrome’s menu offers installation on supported devices. An ordinary HTTP LAN address lacks the secure context required for the PWA and Web Crypto. Each browser profile keeps its own reading state. To keep an existing library when updating to Reading Box, open it with the same browser profile, host and port. Close all old app windows and reopen to activate a waiting service-worker update. The browser or OS controls the installed app’s launch screen and the timing of an updated installation name.
+On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-connected test phone with Android platform tools and USB debugging enabled, run `adb reverse tcp:4173 tcp:4173` on the computer and open `http://localhost:4173` on the phone. Chrome’s menu offers installation on supported devices. An ordinary HTTP LAN address lacks the secure context required for the PWA and Web Crypto. Each browser profile keeps its own reading state. To keep an existing library when updating to Reading Box, open it with the same browser profile, host and port. When upgrading an older installation, open the address printed by `npm run reading-box`. In subsequent releases, choose **Update Reading Box** from the list when you are ready. The browser or OS controls the installed app’s launch screen and the timing of an updated installation name.
 
 ## Data boundaries and limitations
 
@@ -57,7 +59,7 @@ On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-conn
 - Dexie stores the articles, independent saved/archive flags, reading depth, scroll offsets and generated summaries in IndexedDB. A source edit retains the article ID and flags. Successful summaries use a key containing the local reader scope, article, body hash, coverage, stage, model and prompt versions.
 - The mock reads authored responses from same-origin demo assets on demand. No article is submitted to an external model. Browser storage can be cleared or evicted. There is no account, remote sync, analytics or backup in this milestone.
 - All demo publishers and discussion destinations are fictional. The post and discussion links stay within the local demo. Browser sharing hands the selected publisher URL to the device share sheet or copies it. A localhost link resolves on the receiving device only if it is running the same demo.
-- The local service supports subscriptions and tracks observed articles in SQLite. The Subscriptions inbox manages real publications separately from the fictional demo. Extraction, search, additional filters, bulk operations and export come later. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
+- The local service supports subscriptions and tracks observed articles in SQLite. The Subscriptions inbox manages real publications separately from the fictional demo. It supports permitted originals, local search and OPML. Bulk archiving and portable library backups belong to milestone 7. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
 
 The approved Phase 2 plan describes the first real-feed preview at milestone 3 and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
 

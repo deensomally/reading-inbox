@@ -21,9 +21,8 @@ export interface ChangeRequest {
   value: string;
   error?: string;
 }
-// M3 checkpoints have no format. Their cursor can cover deliveries whose
-// publisher-page fields the old reader did not store.
-const articleFormat = 2;
+// Earlier readers omitted publisher checks (M3) or topics (through M5).
+const articleFormat = 3;
 interface Checkpoint {
   id: "delivery";
   phase: "snapshot" | "changes";
@@ -36,6 +35,7 @@ export interface Delivery {
   title: string;
   author: string | null;
   publication: string;
+  topics?: string[];
   published: string | null;
   received: string;
   url: string | null;
@@ -84,6 +84,7 @@ export function adaptDelivery(d: Delivery): Article {
     sourceKey: d.id,
     title: d.title,
     publication: d.publication,
+    topics: d.topics ?? [],
     author: d.author ?? undefined,
     published: d.published ?? undefined,
     received: d.received,
@@ -131,6 +132,7 @@ export class LiveLibrary extends Library {
       [
         this.articles,
         this.articleList,
+        this.searchTerms,
         this.summaries,
         this.states,
         this.checkpoint,

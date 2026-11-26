@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { upgradePreview, subscriptionUpgradePreview } from "../upgrade/preview";
+import { verifyWorkerUpdate } from "../upgrade/worker";
 import { verifyUpgrade } from "../upgrade/journey";
 
 import { verifySubscriptionUpgrade } from "../upgrade/subscriptions";
@@ -63,4 +64,16 @@ test("a blocked upgrade explains how to release the old connection and continues
   await expect(next.getByText(/Close other Reading Box tabs/)).toBeVisible();
   await page.close();
   await expect(next.locator(".row-link")).toHaveCount(8);
+});
+
+test("upgrades a populated Milestone 5 worker from the launch link without interrupting an open Original", async ({
+  page,
+}) => {
+  test.setTimeout(120000);
+  const site = await subscriptionUpgradePreview("milestone5");
+  try {
+    await verifyWorkerUpdate(page, site);
+  } finally {
+    await site.close();
+  }
 });

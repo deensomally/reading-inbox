@@ -10,7 +10,7 @@ import {
 import { waitForNewWorker } from "./journey.ts";
 import type { subscriptionUpgradePreview } from "./preview.ts";
 
-async function browserLibrary(page: Page) {
+export async function browserLibrary(page: Page) {
   return page.evaluate(
     async ({ river, debian }) => {
       function result<T>(request: IDBRequest<T>) {

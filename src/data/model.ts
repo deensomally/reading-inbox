@@ -45,6 +45,7 @@ export interface Fixture {
 export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
   coverage: Fixture["coverage"] | "unverified";
   library?: "subscriptions";
+  topics?: string[];
   license?: string;
   reviewedDebian?: boolean;
   document?: import("../../shared/original").OriginalDocument;
@@ -69,6 +70,8 @@ export type ArticleListItem = Pick<
 > & {
   library: "demo" | "subscriptions";
   newestFirst: number;
+  topics: string[];
+  wordCount?: number;
 };
 
 function articleDate({
@@ -89,6 +92,7 @@ export function articleListItem({
   published,
   received,
   library,
+  topics,
 }: Article): ArticleListItem {
   // An ascending index keeps equal dates in the v1 order (article ID ascending).
   const { timestamp } = articleDate({ published, received });
@@ -100,6 +104,7 @@ export function articleListItem({
     published,
     received,
     library: library ?? "demo",
+    topics: [...new Set(topics?.map((topic) => topic.trim()).filter(Boolean))],
     // IndexedDB omits NaN index keys. Keep even an undated legacy row visible.
     newestFirst: Number.isFinite(timestamp)
       ? -timestamp
@@ -144,17 +149,21 @@ export function belongs(collection: Collection, s: ReadingState) {
   if (collection === "Archive") return s.archived;
   return !s.archived && (collection === "Inbox" || !s.opened);
 }
+const dateFormat = (long: boolean) =>
+  new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: long ? "long" : "short",
+    ...(long && { year: "numeric" }),
+    timeZone: "UTC",
+  });
+const shortDate = dateFormat(false),
+  longDate = dateFormat(true);
 export function dateLabel(
   article: Pick<Article, "published" | "received">,
   long = false,
 ) {
   const { timestamp, prefix } = articleDate(article);
   if (!Number.isFinite(timestamp)) return "Date unavailable";
-  const date = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: long ? "long" : "short",
-    ...(long && { year: "numeric" }),
-    timeZone: "UTC",
-  }).format(timestamp);
+  const date = (long ? longDate : shortDate).format(timestamp);
   return prefix + date;
 }

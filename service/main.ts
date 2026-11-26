@@ -3,6 +3,8 @@ import { Catalog } from "./catalog.ts";
 import { feedApp } from "./app.ts";
 import { readProofs, readPageOrigins, settings } from "./config.ts";
 
+import { readerLaunchPath } from "../shared/reader-launch.ts";
+
 const config = settings();
 process.umask(0o077);
 mkdirSync(config.directory, { recursive: true, mode: 0o700 });
@@ -33,7 +35,7 @@ try {
       await import("vite")
     ).preview({ preview: { host: "127.0.0.1", port, strictPort: true } });
     console.log(
-      "Open Reading Box at http://localhost:" + port + "/#/subscriptions/inbox",
+      "Open Reading Box at http://localhost:" + port + readerLaunchPath,
     );
     console.log(
       "In a second terminal, run npm.cmd run feeds -- pair for a one-time browser code.",

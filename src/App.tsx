@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Archive,
@@ -16,14 +23,15 @@ import {
   WifiOff,
 } from "lucide-react";
 import { Library, db, seedLibrary } from "./data/store";
+import { collections, type Collection, type Stage } from "./data/model";
 import {
-  collections,
-  dateLabel,
-  status,
-  type Collection,
-  type Stage,
-} from "./data/model";
-import { listUrl, navigate, readerUrl, route, useHash } from "./navigation";
+  listUrl,
+  navigate,
+  readerUrl,
+  route,
+  useHash,
+  type ListContext,
+} from "./navigation";
 import { Appearance } from "./components/Appearance";
 import { Reader } from "./components/Reader";
 import { Dialog } from "./components/Dialogs";
@@ -37,6 +45,26 @@ import {
   type Collector,
 } from "./components/Subscriptions";
 import { LibraryContext } from "./data/library-context";
+import {
+  defaults,
+  filtered,
+  resultPage,
+  orderedRows,
+  pageSize,
+  type Row,
+  type SearchOptions,
+} from "./data/search";
+import { InboxRow } from "./components/InboxRow";
+import { AppUpdate } from "./components/AppUpdate";
+import { PublicationGroup } from "./components/PublicationGroup";
+import { InboxControls, SortOrder } from "./components/InboxControls";
+// The narrow layout shows one pane at a time. Loading the hidden desktop
+// preview would read an article body on every change of the first result.
+const narrowLayout = window.matchMedia("(max-width: 51rem)");
+function subscribeLayout(change: () => void) {
+  narrowLayout.addEventListener("change", change);
+  return () => narrowLayout.removeEventListener("change", change);
+}
 const icons = { Inbox, Unread: CircleDot, Saved: Bookmark, Archive };
 const empty: Record<Collection, [string, string]> = {
   Inbox: ["Your inbox is clear", "Archived articles are available in Archive."],
@@ -83,10 +111,15 @@ export default function App() {
   } catch {
     /* The demo also works with preferences disabled. */
   }
-  return route(hash).live || (!hash && lastLive) ? (
-    <LiveWorkspace hash={hash} />
-  ) : (
-    <Workspace hash={hash} library={db} />
+  return (
+    <>
+      <AppUpdate reading={!!route(hash).id} />
+      {route(hash).live || (!hash && lastLive) ? (
+        <LiveWorkspace hash={hash} />
+      ) : (
+        <Workspace hash={hash} library={db} />
+      )}
+    </>
   );
 }
 function LiveWorkspace({ hash }: { hash: string }) {
@@ -128,9 +161,24 @@ function Workspace({
   feeds?: { collector: Collector; library: LiveLibrary; paired: boolean };
 }) {
   const live = !!feeds;
-  const [manage, setManage] = useState(false);
-  const [limit, setLimit] = useState(40);
   const { collection, id, stage, publisher, discussion } = route(hash);
+  // A browser may discard the reader tab on mobile. Keep its return context
+  // in this history entry, scoped to the local library and outside the URL.
+  const remembered: ListContext | undefined = history.state?.listContext;
+  const context =
+    remembered?.library === library.name && remembered.collection === collection
+      ? remembered
+      : undefined;
+  const [filters, setFilters] = useState<Omit<SearchOptions, "text">>(
+    () => context?.options ?? defaults,
+  );
+  const [text, setText] = useState(() => context?.options.text ?? "");
+  const options = useMemo(() => ({ ...filters, text }), [filters, text]);
+  const [manage, setManage] = useState(false);
+  const [limit, setLimit] = useState(() => context?.limit ?? pageSize);
+  const [groupLimits, setGroupLimits] = useState<Map<string, number>>(
+    () => context?.groupLimits ?? new Map(),
+  );
   const [loaded, setLoaded] = useState(false);
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [failure, setFailure] = useState("");
@@ -145,7 +193,7 @@ function Workspace({
   useEffect(() => {
     const blocked = () => setUpgradeBlocked(true);
     library.on("blocked", blocked);
-    (live ? library.open() : seedLibrary(library)).then(
+    (live ? library.prepareIndexes() : seedLibrary(library)).then(
       () => setLoaded(true),
       (e) =>
         setFailure(
@@ -162,26 +210,71 @@ function Workspace({
       clearTimeout(noticeTimer.current);
     };
   }, [library, live]);
-  const result = useLiveQuery(
-    () =>
+  const catalog = useLiveQuery(
+    async () =>
       loaded
-        ? library.collectionPage(
-            live ? "subscriptions" : "demo",
+        ? library.searchCatalog(live ? "subscriptions" : "demo")
+        : undefined,
+    [loaded, library, live],
+  );
+  useEffect(() => {
+    if (catalog?.needsIndex.size)
+      void library
+        .repairLegacyRows(catalog.needsIndex)
+        .catch(() =>
+          setFailure(
+            "The local search index could not be updated. Reload to try again.",
+          ),
+        );
+  }, [catalog, library]);
+  const matches = useLiveQuery(
+    async () =>
+      loaded ? { text, terms: await library.matchingTerms(text) } : undefined,
+    [loaded, library, text],
+  );
+  const ordered = useMemo(
+    () => catalog && orderedRows(catalog, filters.sort, filters.grouped),
+    [catalog, filters.sort, filters.grouped],
+  );
+  const page = useMemo(
+    () =>
+      catalog && matches && ordered
+        ? resultPage(
+            catalog,
             collection,
+            { ...filters, text: matches.text },
+            matches.terms,
             limit,
             id,
+            ordered,
+            groupLimits,
           )
         : undefined,
-    [loaded, library, live, collection, limit, id],
+    [catalog, matches, ordered, collection, filters, limit, id, groupLimits],
   );
-  const page = result?.collection === collection ? result : undefined;
+  function changeOptions({ text, ...patch }: Partial<SearchOptions>) {
+    if (text !== undefined) setText(text);
+    if (Object.keys(patch).length)
+      setFilters((previous) => ({ ...previous, ...patch }));
+    setLimit(pageSize);
+    setGroupLimits((previous) => (previous.size ? new Map() : previous));
+    if (list.current) list.current.scrollTop = 0;
+  }
+  function clearOptions() {
+    changeOptions(defaults);
+    if (collection !== "Inbox" || id) navigate(listUrl("Inbox", live));
+  }
   const visible = page?.rows ?? [];
   const selected = id
     ? page?.selected?.a.id === id
       ? page.selected
       : visible.find((row) => row.a.id === id)
     : visible[0];
-  const selectedId = selected?.a.id;
+  const narrow = useSyncExternalStore(
+    subscribeLayout,
+    () => narrowLayout.matches,
+  );
+  const selectedId = id || !narrow ? selected?.a.id : undefined;
   const article = useLiveQuery(
     () => (selectedId ? library.articles.get(selectedId) : undefined),
     [library, selectedId],
@@ -191,6 +284,18 @@ function Workspace({
       ? { a: article, s: selected.s }
       : undefined;
   const ready = loaded && !!page;
+  useEffect(() => {
+    const pane = list.current;
+    if (!ready || id || !pane) return;
+    const key = (live ? "feeds-list-" : "list-") + collection;
+    const save = () => sessionStorage.setItem(key, String(pane.scrollTop));
+    pane.addEventListener("scrollend", save);
+    window.addEventListener("pagehide", save);
+    return () => {
+      pane.removeEventListener("scrollend", save);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [collection, id, live, ready]);
   useLayoutEffect(() => {
     if (!ready) return;
     if (ready && list.current && !id) {
@@ -230,11 +335,24 @@ function Workspace({
       readerUrl(collection, articleId, s, live),
       !!id,
       !id || !!history.state?.fromList,
+      { library: library.name, collection, options, limit, groupLimits },
     );
   }
   function back() {
     if (history.state?.fromList) history.back();
     else navigate(listUrl(collection, live), true);
+  }
+  function renderRow(row: Row) {
+    return (
+      <InboxRow
+        key={row.a.id}
+        row={row}
+        selected={row.a.id === selected?.a.id}
+        live={live}
+        collection={collection}
+        showLength={options.sort === "shortest" || options.sort === "longest"}
+      />
+    );
   }
   const layoutReady = ready && !failure;
   return (
@@ -255,6 +373,10 @@ function Workspace({
                   <a
                     key={c}
                     href={listUrl(c, live)}
+                    onClick={(e) => {
+                      if (!e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)
+                        changeOptions(defaults);
+                    }}
                     aria-current={collection === c ? "page" : undefined}
                   >
                     <Icon />
@@ -362,20 +484,46 @@ function Workspace({
                   <h1 tabIndex={-1} ref={title}>
                     {collection}
                   </h1>
-                  <span className="count">{page?.total ?? 0}</span>
+                  <span
+                    className="count"
+                    role="status"
+                    aria-label={
+                      page?.text
+                        ? page.total +
+                          (page.total === 1 ? " match for " : " matches for ") +
+                          page.text
+                        : (page?.total ?? 0) + " articles"
+                    }
+                  >
+                    {page?.total ?? 0}
+                  </span>
                 </div>
                 <div className="list-meta">
                   <span>
-                    {collection === "Inbox"
-                      ? (page?.unread ?? 0) + " unread"
-                      : (page?.total ?? 0) +
-                        " " +
-                        (page?.total === 1 ? "article" : "articles")}
+                    {collection === "Inbox" && filtered(options)
+                      ? "Across your library"
+                      : collection === "Inbox"
+                        ? (catalog?.inboxUnread ?? 0) + " unread"
+                        : (page?.total ?? 0) +
+                          " " +
+                          (page?.total === 1 ? "article" : "articles")}
                   </span>
-                  <span>
-                    <ArrowDownWideNarrow /> Newest first
-                  </span>
+                  <div className="quick-sort">
+                    <ArrowDownWideNarrow aria-hidden="true" />
+                    <SortOrder sort={options.sort} change={changeOptions} />
+                  </div>
                 </div>
+                {catalog && matches && (
+                  <InboxControls
+                    options={options}
+                    change={changeOptions}
+                    clear={clearOptions}
+                    catalog={catalog}
+                    terms={matches.terms}
+                    collection={collection}
+                    total={page?.total ?? 0}
+                  />
+                )}
                 {feeds && (
                   <div className="subscription-tools">
                     <button
@@ -395,96 +543,63 @@ function Workspace({
               </header>
               <div
                 className="list-scroll"
+                aria-busy={page?.text !== options.text}
                 ref={list}
-                onScroll={(e) => {
-                  if (!id)
-                    sessionStorage.setItem(
-                      (live ? "feeds-list-" : "list-") + collection,
-                      String(e.currentTarget.scrollTop),
-                    );
+                onClick={(e) => {
+                  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                  const link =
+                    e.target instanceof Element
+                      ? e.target.closest<HTMLAnchorElement>(
+                          "a.row-link, a.quick-original",
+                        )
+                      : null;
+                  if (!link) return;
+                  const target = route(link.hash);
+                  if (target.id) {
+                    e.preventDefault();
+                    open(target.id, target.stage);
+                  }
                 }}
               >
-                {visible.map(({ a, s }) => (
-                  <div
-                    key={a.id}
-                    className={
-                      "article-row" +
-                      (a.id === current?.a.id ? " selected" : "")
-                    }
-                  >
-                    <a
-                      className="row-link"
-                      id={"row-" + a.id}
-                      href={readerUrl(
-                        collection,
-                        a.id,
-                        s.lastStage ?? "essence",
-                        live,
-                      )}
-                      onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                          return;
-                        e.preventDefault();
-                        open(a.id, s.lastStage ?? "essence");
-                      }}
-                    >
-                      <div className="row-top">
-                        <span>{a.publication}</span>
-                        <time dateTime={a.published ?? a.received}>
-                          {dateLabel(a)}
-                        </time>
-                      </div>
-                      <h2>{a.title}</h2>
-                      <div className="row-bottom">
-                        {a.author && (
-                          <>
-                            <span>{a.author}</span>
-                            <i />
-                          </>
-                        )}
-                        <span className="read-state">
-                          {!s.opened && <b />}
-                          {status(s)}
-                        </span>
-                        {s.saved && <Bookmark aria-label="Saved" size={13} />}
-                      </div>
-                    </a>
-                    <a
-                      className="quick-original"
-                      aria-label={"Read original of " + a.title}
-                      title="Read original"
-                      href={readerUrl(collection, a.id, "original", live)}
-                      onClick={(e) => {
-                        if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey)
-                          return;
-                        e.preventDefault();
-                        open(a.id, "original");
-                      }}
-                    >
-                      <BookOpen />
-                    </a>
-                  </div>
-                ))}
-                {(page?.total ?? 0) > visible.length && (
+                {options.grouped
+                  ? page?.groups.map((group) => (
+                      <PublicationGroup
+                        key={group.name}
+                        group={group}
+                        resize={(size) =>
+                          setGroupLimits((previous) =>
+                            new Map(previous).set(group.name, size),
+                          )
+                        }
+                      >
+                        {group.rows.map(renderRow)}
+                      </PublicationGroup>
+                    ))
+                  : visible.map(renderRow)}
+                {!options.grouped && (page?.total ?? 0) > visible.length && (
                   <button
                     className="secondary load-more"
-                    onClick={() => setLimit((n) => n + 40)}
+                    onClick={() => setLimit((n) => n + pageSize)}
                   >
                     Show more articles
                   </button>
                 )}
-                {!visible.length && (
+                {page?.total === 0 && (
                   <div className="empty">
                     <BookOpen />
                     <h2>
-                      {live && collection === "Inbox"
-                        ? "No articles in the inbox"
-                        : empty[collection][0]}
+                      {filtered(options)
+                        ? "No matching articles"
+                        : live && collection === "Inbox"
+                          ? "No articles in the inbox"
+                          : empty[collection][0]}
                     </h2>
                     <p>
-                      {live && collection === "Inbox"
-                        ? "Add a publication in Subscriptions to collect its articles."
-                        : empty[collection][1]}
+                      {filtered(options)
+                        ? "Try another search or clear your filters."
+                        : live && collection === "Inbox"
+                          ? "Add a publication in Subscriptions to collect its articles."
+                          : empty[collection][1]}
                     </p>
                   </div>
                 )}

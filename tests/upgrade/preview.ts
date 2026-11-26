@@ -9,7 +9,13 @@ const phaseOne = "0910f13a9e80b91e452b73ba34be450566f1aae7";
 
 const milestoneThree = "978e64468d56525a76bf1a9aade3a36ebdfc63a0";
 
-async function readerEditions(previous: "phase1" | "milestone3") {
+const milestoneFive = "2583841653c37d3549753d7e567cf0fc3ab061ac";
+const editions = {
+  phase1: phaseOne,
+  milestone3: milestoneThree,
+  milestone5: milestoneFive,
+};
+async function readerEditions(previous: keyof typeof editions) {
   const parent = resolve("playwright-report");
   await mkdir(parent, { recursive: true });
   const workspace = await mkdtemp(join(parent, "upgrade-"));
@@ -23,8 +29,8 @@ async function readerEditions(previous: "phase1" | "milestone3") {
     await mkdir(legacy);
     const archive = execFileSync("git", [
       "archive",
-      previous === "phase1" ? phaseOne : milestoneThree,
-      ...(previous === "milestone3" ? ["shared"] : []),
+      editions[previous],
+      ...(previous !== "phase1" ? ["shared"] : []),
       "src",
       "public",
       "package.json",
@@ -78,13 +84,16 @@ export async function upgradePreview() {
   }
 }
 
-export async function subscriptionUpgradePreview() {
-  const files = await readerEditions("milestone3");
+export async function subscriptionUpgradePreview(
+  previous: "milestone3" | "milestone5" = "milestone3",
+) {
+  const files = await readerEditions(previous);
   try {
     const service = await ownerPreview(false, files.site);
     return {
       ...service,
       publishCurrent: () => files.publish("current"),
+      publishPrevious: () => files.publish("previous"),
       async close() {
         await service.close();
         await files.close();

@@ -1,3 +1,4 @@
+import type { SearchOptions } from "./data/search";
 import { useSyncExternalStore } from "react";
 import { collections, stages, type Stage, type Collection } from "./data/model";
 const subscribe = (update: () => void) => {
@@ -25,7 +26,23 @@ export const listUrl = (collection: Collection, live = false) =>
   (live ? "#/subscriptions/" : "#/") + collection.toLowerCase();
 export const readerUrl = (c: Collection, id: string, s: Stage, live = false) =>
   listUrl(c, live) + "/" + id + "/" + s;
-export function navigate(hash: string, replace = false, fromList = false) {
-  history[replace ? "replaceState" : "pushState"]({ fromList }, "", hash);
+export interface ListContext {
+  library: string;
+  collection: Collection;
+  options: SearchOptions;
+  limit: number;
+  groupLimits?: Map<string, number>;
+}
+export function navigate(
+  hash: string,
+  replace = false,
+  fromList = false,
+  listContext?: ListContext,
+) {
+  history[replace ? "replaceState" : "pushState"](
+    { fromList, listContext },
+    "",
+    hash,
+  );
   window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
