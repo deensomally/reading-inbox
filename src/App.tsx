@@ -37,7 +37,8 @@ import { Reader } from "./components/Reader";
 import { Dialog } from "./components/Dialogs";
 import { ArticleBody } from "./components/ArticleBody";
 
-import { LiveLibrary } from "./data/live-library";
+import { LibraryActions } from "./components/LibraryActions";
+import { collect, LiveLibrary } from "./data/live-library";
 import { connections, BrowserSession } from "./data/connection";
 import {
   Subscriptions,
@@ -174,6 +175,8 @@ function Workspace({
   );
   const [text, setText] = useState(() => context?.options.text ?? "");
   const options = useMemo(() => ({ ...filters, text }), [filters, text]);
+  const actionsButton = useRef<HTMLButtonElement>(null);
+  const [actions, setActions] = useState(false);
   const [manage, setManage] = useState(false);
   const [limit, setLimit] = useState(() => context?.limit ?? pageSize);
   const [groupLimits, setGroupLimits] = useState<Map<string, number>>(
@@ -497,6 +500,14 @@ function Workspace({
                   >
                     {page?.total ?? 0}
                   </span>
+                  <button
+                    ref={actionsButton}
+                    className="plain library-actions-trigger"
+                    disabled={!matches || text !== matches.text}
+                    onClick={() => setActions(true)}
+                  >
+                    Library actions
+                  </button>
                 </div>
                 <div className="list-meta">
                   <span>
@@ -647,6 +658,34 @@ function Workspace({
             </>
           )}
         </div>
+        {actions && catalog && matches && ordered && (
+          <LibraryActions
+            db={library}
+            kind={live ? "subscriptions" : "demo"}
+            collection={collection}
+            options={options}
+            catalog={catalog}
+            terms={matches.terms}
+            ordered={ordered}
+            onClose={() => {
+              setActions(false);
+              requestAnimationFrame(() => actionsButton.current?.focus());
+            }}
+            checkService={
+              feeds?.collector.session
+                ? async () => {
+                    if (!navigator.onLine) return false;
+                    try {
+                      await collect(feeds.library, feeds.collector.session!);
+                      return true;
+                    } catch {
+                      return false;
+                    }
+                  }
+                : undefined
+            }
+          />
+        )}
         {manage && feeds && (
           <Subscriptions
             library={feeds.library}

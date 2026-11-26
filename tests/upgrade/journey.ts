@@ -137,7 +137,7 @@ export async function verifyUpgrade(
   await expect(page.locator("#row-night-train")).toBeVisible();
   const after = await snapshot(page);
   expect(await moduleScript.getAttribute("src")).not.toBe(phaseOneBundle);
-  expect(after.version).toBe(40);
+  expect(after.version).toBe(50);
   expect(after.records).toEqual(before.records);
   await expect(page.locator("html")).toHaveAttribute(
     "data-theme-before-mount",
@@ -175,7 +175,7 @@ export async function verifyUpgrade(
     "Original opened",
   );
   expect(await moduleScript.getAttribute("src")).toBe(phaseOneBundle);
-  expect((await snapshot(page)).version).toBe(40);
+  expect((await snapshot(page)).version).toBe(50);
   await page.locator("#row-night-train").click();
   await expect(page.locator(".original-body")).toBeVisible();
   await page.getByRole("button", { name: "Restore", exact: true }).click();

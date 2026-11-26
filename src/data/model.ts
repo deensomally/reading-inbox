@@ -55,6 +55,10 @@ export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
   subscriberOnly?: boolean;
   source: "rss" | "newsletter";
   sourceKey: string;
+  portableId?: string;
+  sourceRef?: string;
+  withdrawn?: boolean;
+  backupEdition?: { coverage: Article["coverage"]; license?: string };
   blocks: Block[];
   bodyHash: string;
   permissions: {
@@ -62,6 +66,8 @@ export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
     copy: boolean;
     retain: boolean;
     summarise: boolean;
+    export?: boolean;
+    exportSummary?: boolean;
   };
 }
 export type ArticleListItem = Pick<
@@ -119,6 +125,8 @@ export interface ReadingState {
   deepest?: Stage;
   lastStage?: Stage;
   publisherOpened?: boolean;
+  modified?: Partial<Record<"archived" | "saved" | "progress", number>>;
+  archiveOperation?: string;
 }
 export const initialState = (id: string): ReadingState => ({
   id,

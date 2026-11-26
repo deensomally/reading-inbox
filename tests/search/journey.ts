@@ -277,6 +277,31 @@ export async function largeLibrary(page: Page, url: string, touch: boolean) {
     await page.getByRole("button", { name: "Clear all filters" }).click();
     await expect(page.locator(".count")).toHaveText("9000");
     await expect(input).toHaveValue("");
+    await input.fill("marker00");
+    await expect(page.locator(".count")).toHaveText("1000");
+    const actions = page.getByRole("button", { name: "Library actions" });
+    await actions.click();
+    await page
+      .getByRole("button", { name: "Archive articles", exact: true })
+      .click();
+    const checks = page.getByRole("dialog").getByRole("checkbox");
+    await checks.first().check();
+    await page.getByRole("button", { name: "Show more matches" }).click();
+    await checks.nth(55).check();
+    await expect(page.getByText("2 selected", { exact: true })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Select all 900 matching articles" })
+      .click();
+    await page.getByRole("button", { name: "Review archive" }).click();
+    await page.getByRole("button", { name: "Confirm archive of 900" }).click();
+    await expect(page.getByText("Archived 900 articles.")).toBeVisible();
+    await page.getByRole("button", { name: "Close dialog" }).click();
+    await page.getByRole("button", { name: "Clear all filters" }).click();
+    await expect(page.locator(".count")).toHaveText("8100");
+    await actions.click();
+    await page.getByRole("button", { name: "Undo last bulk archive" }).click();
+    await page.getByRole("button", { name: "Close dialog" }).click();
+    await expect(page.locator(".count")).toHaveText("9000");
   } finally {
     await page.context().setOffline(false);
   }

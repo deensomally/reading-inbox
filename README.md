@@ -4,6 +4,8 @@ A local-first reading PWA for Android and Windows. Phase 1 includes eight fictio
 
 The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
 
+Milestone 7 adds bulk and date-based archiving with Undo, and local JSON backup and restore of reading state and explicitly exportable content. [Windows acceptance steps and RSS-only device checklist](docs/ARCHIVE_AND_PORTABLE_DATA.md)
+
 Milestone 6 adds offline search, publication and topic filters, independent status filters, length sorting and publication groups. [Test inbox search on Windows](docs/SEARCH_INBOX.md)
 
 Milestone 5 adds OPML 2.0 import previews, nested folders and active subscription exports. [Test portable subscriptions on Windows](docs/PORTABLE_SUBSCRIPTIONS.md)
@@ -57,9 +59,9 @@ On **Android**, use Chrome with trusted HTTPS or device loopback. For a USB-conn
 
 - The fixture adapter supports RSS-style deliveries with GUIDs and plain-text newsletters with Message-IDs. Publication date falls back to a labelled received date. Complete, excerpt and unavailable bodies have distinct presentation and copy controls.
 - Dexie stores the articles, independent saved/archive flags, reading depth, scroll offsets and generated summaries in IndexedDB. A source edit retains the article ID and flags. Successful summaries use a key containing the local reader scope, article, body hash, coverage, stage, model and prompt versions.
-- The mock reads authored responses from same-origin demo assets on demand. No article is submitted to an external model. Browser storage can be cleared or evicted. There is no account, remote sync, analytics or backup in this milestone.
+- The mock reads authored responses from same-origin demo assets on demand. No article is submitted to an external model. Browser storage can be cleared or evicted. Portable backups are local files you choose to save. Each browser profile keeps its own library.
 - All demo publishers and discussion destinations are fictional. The post and discussion links stay within the local demo. Browser sharing hands the selected publisher URL to the device share sheet or copies it. A localhost link resolves on the receiving device only if it is running the same demo.
-- The local service supports subscriptions and tracks observed articles in SQLite. The Subscriptions inbox manages real publications separately from the fictional demo. It supports permitted originals, local search and OPML. Bulk archiving and portable library backups belong to milestone 7. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
+- The local service supports subscriptions and tracks observed articles in SQLite. The Subscriptions inbox manages real publications separately from the fictional demo. It supports permitted originals, offline search, bulk archiving, OPML for subscriptions and JSON for the reading library. External AI requires separate provider and budget approval. [Phase 2 delivery milestones](docs/PHASE_2_PLAN.md#delivery-milestones)
 
 The approved Phase 2 plan describes the first real-feed preview at milestone 3 and the separate decision about paid summaries. [Read the Phase 2 technical plan](docs/PHASE_2_PLAN.md)
 
