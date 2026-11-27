@@ -14,6 +14,7 @@ const editions = {
   phase1: phaseOne,
   milestone3: milestoneThree,
   milestone5: milestoneFive,
+  milestone6: "829ad89c0ade5d6ede4ecda7983b310b8f0486c8",
 };
 async function readerEditions(previous: keyof typeof editions) {
   const parent = resolve("playwright-report");
@@ -31,6 +32,7 @@ async function readerEditions(previous: keyof typeof editions) {
       "archive",
       editions[previous],
       ...(previous !== "phase1" ? ["shared"] : []),
+      ...(previous === "milestone6" ? ["api"] : []),
       "src",
       "public",
       "package.json",
@@ -38,7 +40,19 @@ async function readerEditions(previous: keyof typeof editions) {
       "vite.config.ts",
     ]);
     execFileSync("tar", ["-xf", "-", "-C", legacy], { input: archive });
-    await build({ root: legacy, logLevel: "error" });
+    // Released multi-page configurations resolve HTML entry points from cwd.
+    if (previous === "milestone6")
+      execFileSync(
+        process.execPath,
+        [
+          resolve("node_modules/vite/bin/vite.js"),
+          "build",
+          "--logLevel",
+          "error",
+        ],
+        { cwd: legacy },
+      );
+    else await build({ root: legacy, logLevel: "error" });
     await publish("previous");
     return {
       site,
@@ -85,7 +99,7 @@ export async function upgradePreview() {
 }
 
 export async function subscriptionUpgradePreview(
-  previous: "milestone3" | "milestone5" = "milestone3",
+  previous: "milestone3" | "milestone5" | "milestone6" = "milestone3",
 ) {
   const files = await readerEditions(previous);
   try {

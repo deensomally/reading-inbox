@@ -147,7 +147,12 @@ export class Catalog {
           this.db.prepare("PRAGMA user_version").get()?.user_version,
         );
         if (version === 0) this.db.exec(schema);
-        else if (version !== 1 && version !== 2 && version !== 3)
+        else if (
+          version !== 1 &&
+          version !== 2 &&
+          version !== 3 &&
+          version !== 4
+        )
           throw new Error("Unsupported Reading Box service database version.");
         if (version < 2)
           this.db.exec(`
@@ -161,6 +166,18 @@ export class Catalog {
             feed_id TEXT NOT NULL REFERENCES feeds(id), folders TEXT NOT NULL, title TEXT NOT NULL, html_url TEXT,
             PRIMARY KEY(feed_id,folders));
           PRAGMA user_version=3;`);
+        if (version < 4) {
+          this.db.exec(`
+            CREATE TABLE IF NOT EXISTS portable_sources(feed_id TEXT PRIMARY KEY REFERENCES feeds(id), source_ref TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS article_alias_lookup ON item_aliases(article_id);
+            PRAGMA user_version=4;`);
+          for (const feed of this.db.prepare("SELECT id,url FROM feeds").all())
+            this.run(
+              "INSERT OR IGNORE INTO portable_sources VALUES(?,?)",
+              feed.id,
+              digest(String(feed.url)),
+            );
+        }
       });
       this.key = Buffer.from(
         String(
@@ -372,6 +389,11 @@ export class Catalog {
         edition.aliases.at(-1)!,
         edition.parsed!.title,
         now,
+      );
+      this.run(
+        "INSERT INTO portable_sources VALUES(?,?)",
+        id,
+        digest(edition.aliases.at(-1)!),
       );
       const f = this.get(owner, id);
       this.apply(f, edition, now, jitter);
@@ -711,13 +733,23 @@ export class Catalog {
     }
   }
   article(owner: string, id: string) {
-    const row = this.one<StoredArticle>(
-      "SELECT a.* FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE f.owner=? AND a.id=?",
+    const row = this.one<
+      StoredArticle & { source_ref: string; first_alias: string }
+    >(
+      `SELECT a.*, p.source_ref,
+       (SELECT alias FROM item_aliases WHERE feed_id=a.feed_id AND article_id=a.id ORDER BY rowid LIMIT 1) AS first_alias
+       FROM articles a JOIN feeds f ON f.id=a.feed_id JOIN portable_sources p ON p.feed_id=f.id WHERE f.owner=? AND a.id=?`,
       owner,
       id,
     );
     if (!row) throw notFound();
     const feed = JSON.parse(row.metadata);
+    // The first observed alias survives subsequent publisher edits. Hash the
+    // feed and alias together so neither private query values nor GUIDs travel.
+    const sourceRef = row.source_ref;
+    const portableId = digest(
+      JSON.stringify([sourceRef, row.first_alias ?? id]),
+    );
     const data = JSON.parse(row.body);
     const page = this.one<{ metadata: string; body: string | null }>(
       "SELECT metadata,body FROM page_editions WHERE article_id=?",
@@ -725,6 +757,8 @@ export class Catalog {
     );
     return {
       ...feed,
+      sourceRef,
+      portableId,
       ...(Array.isArray(data) ? { paragraphs: data } : data),
       ...(page && JSON.parse(page.metadata)),
       ...(page?.body && JSON.parse(page.body)),

@@ -166,7 +166,7 @@ type Membership = {
   keys(): IterableIterator<string>;
   has(id: string): boolean;
 };
-function candidates(
+export function candidates(
   c: SearchCatalog,
   collection: Collection,
   o: SearchOptions,

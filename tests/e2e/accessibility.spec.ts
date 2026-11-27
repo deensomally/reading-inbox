@@ -27,6 +27,22 @@ for (const scheme of ["light", "dark"] as const) {
       await scan(button);
       await page.getByRole("button", { name: "Close dialog" }).click();
     }
+    const actions = page.getByRole("button", { name: "Library actions" });
+    await actions.click();
+    await scan("library actions");
+    await page
+      .getByRole("button", { name: "Archive articles", exact: true })
+      .click();
+    await page.getByRole("checkbox", { name: /night train/i }).check();
+    await scan("archive selection");
+    await page.getByRole("button", { name: "Review archive" }).click();
+    await scan("archive confirmation");
+    await page.keyboard.press("Escape");
+    await expect(actions).toBeFocused();
+    await actions.press("Enter");
+    await page.getByRole("button", { name: "Library backup" }).click();
+    await scan("library backup");
+    await page.keyboard.press("Escape");
     for (const stage of ["essence", "brief", "understanding", "original"]) {
       await page.goto("/#/inbox/night-train/" + stage);
       await expect(

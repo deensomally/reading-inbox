@@ -1,3 +1,4 @@
+import { backupJourney } from "./archive/journey.ts";
 import { largeLibrary } from "./search/journey.ts";
 import { verifyPortability } from "./opml/journey.ts";
 // Runs only against an explicitly supplied Android emulator running Chrome.
@@ -126,6 +127,10 @@ try {
   try {
     forward(portable.port, true);
     await verifyPortability(portablePage, portable, true);
+    await backupJourney(portablePage, portable.url, true);
+    console.log(
+      "Android library JSON export, restore, bulk archive and persistent Undo passed",
+    );
     console.log(
       "Android OPML preview, import, retry and XML round-trip passed",
     );

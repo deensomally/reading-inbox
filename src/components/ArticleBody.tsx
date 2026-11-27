@@ -4,7 +4,7 @@ import type { Article } from "../data/model";
 import { useLibrary } from "../data/library-context";
 function useHandoff(a: Article) {
   const db = useLibrary();
-  return () => void db.states.update(a.id, { publisherOpened: true });
+  return () => void db.markRead(a.id, "publisherOpened");
 }
 export function PublisherLink({ a }: { a: Article }) {
   const handoff = useHandoff(a);

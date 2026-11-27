@@ -469,3 +469,36 @@ it("rechecks inherited rights when licensed entries leave the feed window", asyn
     (await get("/api/changes?cursor=" + snapshot.changesCursor)).json().items,
   ).toHaveLength(1);
 });
+
+it("keeps opaque portable identifiers across collector installations, canonical redirects and publisher GUID edits", async () => {
+  const privateGuid = "publication-guid-with-private-token";
+  origin.routes.set("/feed", { body: rss(item(privateGuid, "/one", "First")) });
+  const feedId = await subscribe();
+  await subscribe(example, "second");
+  const observed = async (profile = "local") =>
+    (await get("/api/articles?bodies=true", profile)).json().items[0];
+  const first = await observed(),
+    second = await observed("second");
+  expect(first.id).not.toBe(second.id);
+  expect(first.sourceRef).toMatch(/^[0-9a-f]{64}$/);
+  expect(first.portableId).toMatch(/^[0-9a-f]{64}$/);
+  expect(second).toMatchObject({
+    sourceRef: first.sourceRef,
+    portableId: first.portableId,
+  });
+  now += INTERVAL + 1;
+  origin.routes.set("/feed", {
+    status: 301,
+    headers: { location: example.replace("/feed", "/redirected") },
+  });
+  origin.routes.set("/redirected", {
+    body: rss(item("updated-guid", "/one", "Corrected edition")),
+  });
+  await service.poller.refresh("local", feedId);
+  expect(await observed()).toMatchObject({
+    title: "Corrected edition",
+    id: first.id,
+    sourceRef: first.sourceRef,
+    portableId: first.portableId,
+  });
+});

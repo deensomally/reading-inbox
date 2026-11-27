@@ -21,8 +21,8 @@ export interface ChangeRequest {
   value: string;
   error?: string;
 }
-// Earlier readers omitted publisher checks (M3) or topics (through M5).
-const articleFormat = 3;
+// Replay older snapshots once to fill in page eligibility, topics and portable identities.
+const articleFormat = 4;
 interface Checkpoint {
   id: "delivery";
   phase: "snapshot" | "changes";
@@ -32,6 +32,8 @@ interface Checkpoint {
 export interface Delivery {
   id: string;
   feedId: string;
+  sourceRef?: string;
+  portableId?: string;
   title: string;
   author: string | null;
   publication: string;
@@ -82,6 +84,9 @@ export function adaptDelivery(d: Delivery): Article {
     library: "subscriptions",
     source: "rss",
     sourceKey: d.id,
+    sourceRef: d.sourceRef,
+    portableId: d.portableId,
+    withdrawn: d.withdrawn,
     title: d.title,
     publication: d.publication,
     topics: d.topics ?? [],
@@ -106,6 +111,7 @@ export function adaptDelivery(d: Delivery): Article {
       display,
       retain: display,
       copy: display && d.permissions.copy,
+      export: display && d.permissions.export === true,
       summarise: false,
     },
   };

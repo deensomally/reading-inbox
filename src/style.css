@@ -1410,3 +1410,67 @@ textarea {
   border: 1px solid var(--rule);
   border-radius: 0.4rem;
 }
+.library-actions-trigger {
+  margin-inline-start: auto;
+  font-size: 0.84rem;
+}
+.library-actions {
+  display: grid;
+  gap: 0.7rem;
+}
+.archive-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  border: 0;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+.archive-modes legend,
+.file-label {
+  font-weight: 600;
+}
+.archive-modes label,
+.selection-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+}
+.file-label {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.file-label input {
+  max-width: 100%;
+  min-height: 2.6rem;
+  font: inherit;
+  color: var(--ink);
+}
+.selection-list,
+.restore-list {
+  max-height: 36dvh;
+  overflow: auto;
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.selection-list label,
+.restore-list li {
+  border-bottom: 1px solid var(--rule);
+  padding: 0.45rem 0.25rem;
+  overflow-wrap: anywhere;
+}
+.selection-list small,
+.restore-list small {
+  display: block;
+  color: var(--muted);
+}
+.backup-scope {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.list-title {
+  flex-wrap: wrap;
+}

@@ -21,7 +21,8 @@ export class Library extends Dexie {
     string
   >;
   // The database belongs to this browser profile, which defines the device and reader scope in Phase 1.
-  positions!: Table<{ id: string; top: number }, string>;
+  positions!: Table<{ id: string; top: number; changedAt?: number }, string>;
+  archiveUndo!: Table<{ id: string; operation: string; ids: string[] }, string>;
   meta!: Table<{ id: string; value: number }, string>;
   constructor(name = "reading-inbox") {
     super(name);
@@ -43,6 +44,7 @@ export class Library extends Dexie {
     this.version(4)
       .stores({ searchTerms: "id, *terms" })
       .upgrade((tx) => tx.table("indexProgress").put({ id: "articleList" }));
+    this.version(5).stores({ articles: "id, portableId", archiveUndo: "id" });
   }
   async indexNextBatch(): Promise<boolean> {
     return this.transaction(
@@ -159,7 +161,17 @@ export class Library extends Dexie {
       this.states,
       this.summaries,
       async () => {
-        for (const article of articles) {
+        for (let article of articles) {
+          if (article.portableId) {
+            const existing = await this.articles
+              .where("portableId")
+              .equals(article.portableId)
+              .primaryKeys();
+            // Keep the local row and all its positions when a rebuilt service
+            // delivers the same publisher item under a new service UUID.
+            if (existing.length === 1 && existing[0] !== article.id)
+              article = { ...article, id: existing[0] };
+          }
           const previous = await this.articles.get(article.id);
           if (previous && onlyMissing) {
             // A rolled-back v1 reader can seed an article without its v2 index row.
@@ -179,7 +191,10 @@ export class Library extends Dexie {
             await this.indexEditions([article]);
           }
           if (!(await this.states.get(article.id)))
-            await this.states.add(initialState(article.id));
+            await this.states.add({
+              ...initialState(article.id),
+              modified: { saved: 0, archived: 0, progress: 0 },
+            });
         }
       },
     );
@@ -190,13 +205,38 @@ export class Library extends Dexie {
       .equals(id)
       .modify((s) => {
         s[field] = !s[field];
+        s.modified = { ...s.modified, [field]: Date.now() };
+        if (field === "archived") delete s.archiveOperation;
       });
+  }
+  markRead(id: string, field: "opened" | "publisherOpened") {
+    return this.states
+      .where("id")
+      .equals(id)
+      .modify((s) => {
+        if (!s[field]) {
+          s[field] = true;
+          s.modified = { ...s.modified, progress: Date.now() };
+        }
+      });
+  }
+  rememberPosition(id: string, top: number) {
+    return this.transaction("rw", this.positions, async () => {
+      if ((await this.positions.get(id))?.top !== top)
+        await this.positions.put({ id, top, changedAt: Date.now() });
+    });
   }
   viewed(id: string, stage: Stage, reached: boolean) {
     return this.states
       .where("id")
       .equals(id)
       .modify((s) => {
+        if (
+          !s.opened ||
+          s.lastStage !== stage ||
+          (reached && stages.indexOf(stage) > stages.indexOf(s.deepest!))
+        )
+          s.modified = { ...s.modified, progress: Date.now() };
         s.opened = true;
         s.lastStage = stage;
         if (

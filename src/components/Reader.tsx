@@ -147,7 +147,7 @@ export function Reader({
   useEffect(() => {
     if (!stage) return;
     let active = true;
-    void db.states.update(a.id, { opened: true });
+    void db.markRead(a.id, "opened");
     if (live || original || !allowed) {
       void db.viewed(
         a.id,
@@ -356,10 +356,10 @@ export function Reader({
         ref={pane}
         onScroll={(e) => {
           if (stage && restored.current)
-            void db.positions.put({
-              id: a.id + "/" + stage,
-              top: e.currentTarget.scrollTop,
-            });
+            void db.rememberPosition(
+              a.id + "/" + stage,
+              e.currentTarget.scrollTop,
+            );
         }}
       >
         <article className="paper">
