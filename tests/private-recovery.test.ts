@@ -356,3 +356,43 @@ it("distinguishes a WordPress link to the next post from a continuation of the s
       ?.outcome,
   ).toBe("partial");
 });
+
+it("reassesses historical permissions on a removed feed without delivering newly published entries", async () => {
+  const remote = await publisher();
+  const db = new Catalog(":memory:");
+  const worker = new Poller(db, { download: remote.download });
+  try {
+    remote.routes.set("/feed", {
+      body: rss(item("history", "/old", "Former article")),
+    });
+    const sub = await worker.subscribe("owner", example);
+    const { id } = db.articles("owner", 10).items[0];
+    expect(db.pageInput("owner", id).pageCandidate).toBeDefined();
+    db.unsubscribe("owner", sub.subscription.id);
+    const inactive = db.get("owner", sub.subscription.id);
+    const xml = rss(
+      item("new", "/new", "Published after removal"),
+      "<copyright>Do not store</copyright>",
+    );
+    db.recordInactiveFeedUse(
+      inactive,
+      {
+        parsed: parseFeed(xml, example),
+        aliases: [example],
+        url: example,
+        etag: null,
+        modified: null,
+        freshness: null,
+        noStore: false,
+      },
+      Date.now(),
+    );
+    expect(db.pageInput("owner", id).pageCandidate).toBeUndefined();
+    expect(db.articles("owner", 10).items.map((i) => i.id)).toEqual([id]);
+    expect(db.get("owner", sub.subscription.id).active).toBe(0);
+  } finally {
+    await worker.stop();
+    db.close();
+    await remote.close();
+  }
+});

@@ -484,62 +484,7 @@ export class Catalog {
   }
   private apply(f: Feed, edition: Edition, now: number, jitter: number) {
     this.aliases(f, edition.aliases);
-    this.recordFeedUse(f.id, edition);
-    if (edition.noStore) {
-      for (const row of this.all<StoredArticle>(
-        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
-        f.id,
-      )) {
-        this.restrictContent(row, f.id, "no_store");
-      }
-    }
-    if (edition.parsed) {
-      if (edition.parsed.pagePolicy) {
-        for (const row of this.all<StoredArticle>(
-          "SELECT * FROM articles WHERE feed_id=? AND json_extract(metadata,'$.pageCandidate') IS NOT NULL",
-          f.id,
-        )) {
-          const m = JSON.parse(row.metadata);
-          delete m.pageCandidate;
-          m.pagePolicy = edition.parsed.pagePolicy;
-          m.revision = digest(row.revision + m.pagePolicy);
-          const json = JSON.stringify(m);
-          this.run(
-            "UPDATE articles SET metadata=?,revision=? WHERE id=?",
-            json,
-            m.revision,
-            row.id,
-          );
-          this.run(
-            "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
-            f.id,
-            row.id,
-            Date.parse(m.published ?? m.received),
-            json,
-          );
-          this.run(
-            "UPDATE recovery SET status='restricted',lease=NULL,detail=? WHERE article_id=?",
-            m.pagePolicy,
-            row.id,
-          );
-        }
-      }
-      if (edition.parsed.pageRestriction) {
-        for (const row of this.all<StoredArticle>(
-          "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
-          f.id,
-        ))
-          this.restrictContent(row, f.id, "license");
-      }
-      // Feed-level rights also apply to articles that have rolled out of its window.
-      const affected = this.all<StoredArticle>(
-        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL) AND json_extract(metadata,'$.permissionSource')='feed' AND json_extract(metadata,'$.license') IS NOT ?",
-        f.id,
-        edition.parsed.license,
-      );
-      for (const row of affected) this.restrictContent(row, f.id, "license");
-      this.ingest(f, edition.parsed, now);
-    }
+    this.applyContent(f, edition, now);
     const ttl = edition.parsed?.ttl ?? f.ttl;
     const freshness = edition.freshness ?? (edition.parsed ? 0 : f.freshness);
     const wait = Math.max(ttl, freshness);
@@ -743,8 +688,10 @@ export class Catalog {
       if (e.sourceId) aliases.push("id:" + e.sourceId);
       if (e.url && counts.get(e.url)!.size === 1) aliases.push("url:" + e.url);
       if (!aliases.length) aliases.push("hash:" + e.fingerprint);
-      const id =
-        aliases.map((a) => this.itemId(f.id, a)).find(Boolean) ?? randomUUID();
+      const observed = aliases.map((a) => this.itemId(f.id, a)).find(Boolean);
+      // Owner-requested recovery may revisit a removed subscription's history.
+      if (!f.active && !observed) continue;
+      const id = observed ?? randomUUID();
       const prior = this.one<StoredArticle>(
         "SELECT * FROM articles WHERE id=?",
         id,
@@ -907,7 +854,7 @@ export class Catalog {
   pageGone(id: string) {
     // A changed feed edition invalidates this page row in the same transaction.
     return !!this.one(
-      "SELECT 1 FROM page_editions WHERE article_id=? AND json_extract(metadata,'$.outcome')='unavailable'",
+      "SELECT 1 FROM page_editions p JOIN recovery r ON r.article_id=p.article_id WHERE p.article_id=? AND r.status IN ('partial','unavailable') AND json_extract(p.metadata,'$.outcome')='unavailable'",
       id,
     );
   }
@@ -1093,18 +1040,73 @@ export class Catalog {
     );
     return row && this.get(owner, row.id);
   }
-  recordInactiveFeedUse(feed: string, edition: Edition) {
-    this.transaction(() => this.recordFeedUse(feed, edition));
+  recordInactiveFeedUse(feed: Feed, edition: Edition, now: number) {
+    this.transaction(() => this.applyContent(feed, edition, now));
   }
-  private recordFeedUse(feed: string, edition: Edition) {
-    if (edition.useLimits) this.restrictUses(feed, edition.useLimits);
+  private applyContent(f: Feed, edition: Edition, now: number) {
+    if (edition.useLimits) this.restrictUses(f.id, edition.useLimits);
     if (edition.parsed || edition.noStore)
       this.run(
         "INSERT OR REPLACE INTO feed_use VALUES(?,?,?)",
-        feed,
+        f.id,
         Number(edition.noStore || !!edition.parsed?.pageRestriction),
         edition.parsed?.pagePolicy ?? null,
       );
+    if (edition.noStore) {
+      for (const row of this.all<StoredArticle>(
+        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
+        f.id,
+      )) {
+        this.restrictContent(row, f.id, "no_store");
+      }
+    }
+    if (edition.parsed) {
+      if (edition.parsed.pagePolicy) {
+        for (const row of this.all<StoredArticle>(
+          "SELECT * FROM articles WHERE feed_id=? AND json_extract(metadata,'$.pageCandidate') IS NOT NULL",
+          f.id,
+        )) {
+          const m = JSON.parse(row.metadata);
+          delete m.pageCandidate;
+          m.pagePolicy = edition.parsed.pagePolicy;
+          m.revision = digest(row.revision + m.pagePolicy);
+          const json = JSON.stringify(m);
+          this.run(
+            "UPDATE articles SET metadata=?,revision=? WHERE id=?",
+            json,
+            m.revision,
+            row.id,
+          );
+          this.run(
+            "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+            f.id,
+            row.id,
+            Date.parse(m.published ?? m.received),
+            json,
+          );
+          this.run(
+            "UPDATE recovery SET status='restricted',lease=NULL,detail=? WHERE article_id=?",
+            m.pagePolicy,
+            row.id,
+          );
+        }
+      }
+      if (edition.parsed.pageRestriction) {
+        for (const row of this.all<StoredArticle>(
+          "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
+          f.id,
+        ))
+          this.restrictContent(row, f.id, "license");
+      }
+      // Feed-level rights also apply to articles that have rolled out of its window.
+      const affected = this.all<StoredArticle>(
+        "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL) AND json_extract(metadata,'$.permissionSource')='feed' AND json_extract(metadata,'$.license') IS NOT ?",
+        f.id,
+        edition.parsed.license,
+      );
+      for (const row of affected) this.restrictContent(row, f.id, "license");
+      this.ingest(f, edition.parsed, now);
+    }
   }
   prepareRecovery(
     owner: string,

@@ -314,7 +314,7 @@ export class Poller {
           const edition = await this.queue("history-policy:" + legacy.id, () =>
             this.edition(legacy.url),
           );
-          this.catalog.recordInactiveFeedUse(legacy.id, edition);
+          this.catalog.recordInactiveFeedUse(legacy, edition, this.now());
         }
       }
       const base = this.catalog.prepareRecovery(job.owner, job.id, this.terms);
