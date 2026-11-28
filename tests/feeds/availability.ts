@@ -131,8 +131,13 @@ try {
         reasons: {} as Record<string, number>,
       });
       const results = [counts(), counts()];
-      for (let i = 0; i < n; i++) {
-        const index = Math.floor((i * after.entries.length) / n);
+      const census = [counts(), counts()];
+      const sample = new Set(
+        Array.from({ length: n }, (_, i) =>
+          Math.floor((i * after.entries.length) / n),
+        ),
+      );
+      for (let index = 0; index < after.entries.length; index++) {
         const cache = new Map<string, DocumentResponse>();
         const get: Download = async (u, v, p) => {
           const key = p + " " + u;
@@ -151,27 +156,37 @@ try {
             j === 0 ? pages.extractPage : extractPage,
             get,
           );
-          const c = results[j];
-          c[
-            r.body as "page" | "feed" | "unavailable" | "excerpt" | "unverified"
-          ]++;
-          if (
-            r.access === "access" ||
-            r.access === "restriction" ||
-            r.access === "technical"
-          )
-            c[r.access]++;
-          if (r.access !== "access" && r.access !== "restriction") c.eligible++;
-          if (row.content.pageCandidate && row.content.coverage !== "complete")
-            c.pageAttempts++;
-          if (r.ai) c.ai++;
-          if (r.diagnostic && r.body !== "page")
-            c.reasons[r.diagnostic] = (c.reasons[r.diagnostic] ?? 0) + 1;
+          const cohorts = sample.has(index)
+            ? [census[j], results[j]]
+            : [census[j]];
+          for (const c of cohorts) {
+            c[
+              r.body as
+                "page" | "feed" | "unavailable" | "excerpt" | "unverified"
+            ]++;
+            if (
+              r.access === "access" ||
+              r.access === "restriction" ||
+              r.access === "technical"
+            )
+              c[r.access]++;
+            if (r.access !== "access" && r.access !== "restriction")
+              c.eligible++;
+            if (
+              row.content.pageCandidate &&
+              row.content.coverage !== "complete"
+            )
+              c.pageAttempts++;
+            if (r.ai) c.ai++;
+            if (r.diagnostic && r.body !== "page")
+              c.reasons[r.diagnostic] = (c.reasons[r.diagnostic] ?? 0) + 1;
+          }
         }
       }
       report(label, {
         discovered: after.entries.length,
         sampled: n,
+        census: { before: census[0], after: census[1] },
         before: results[0],
         after: results[1],
       });
