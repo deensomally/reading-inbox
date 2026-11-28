@@ -1474,3 +1474,16 @@ textarea {
 .list-title {
   flex-wrap: wrap;
 }
+.content-recovery {
+  border-top: 1px solid var(--line);
+  margin-block: 1rem;
+  padding-top: 1rem;
+}
+.content-recovery p,
+.content-recovery details {
+  font-size: 0.875rem;
+}
+.content-recovery li {
+  margin-block: 0.5rem;
+  overflow-wrap: anywhere;
+}

@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { Catalog } from "./catalog.ts";
 import { feedApp } from "./app.ts";
-import { readProofs, readPageOrigins, settings } from "./config.ts";
+import { readProofs, readPublisherTerms, settings } from "./config.ts";
 
 import { readerLaunchPath } from "../shared/reader-launch.ts";
 
@@ -13,7 +13,7 @@ const catalog = new Catalog(config.database);
 catalog.reconcileProofs(proofs);
 const { app, poller } = feedApp(catalog, {
   proofs,
-  pageOrigins: readPageOrigins(config.directory),
+  terms: readPublisherTerms(config.directory),
 });
 let reader: import("vite").PreviewServer | undefined;
 app.addHook("onClose", async () => {

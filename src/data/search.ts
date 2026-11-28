@@ -36,6 +36,9 @@ export function indexEdition(article: Article) {
   const body = tokens(text);
   if (article.coverage === "complete" && body.length)
     list.wordCount = body.length;
+  if (body.length && article.coverage !== "complete")
+    list.availableWords = body.length;
+  if (article.provenance) list.fullSource = article.provenance;
   const terms = new Set(
     tokens(
       [list.title, list.author, list.publication, ...list.topics].join(" "),

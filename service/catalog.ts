@@ -8,6 +8,7 @@ import {
   type StatementSync,
 } from "node:sqlite";
 import { digest, FeedError, type ParsedFeed } from "./types.ts";
+import { pageCandidate } from "./page-policy.ts";
 import { reviewKey, type Proofs } from "./parser.ts";
 
 export const INTERVAL = 30 * 60000;
@@ -151,7 +152,8 @@ export class Catalog {
           version !== 1 &&
           version !== 2 &&
           version !== 3 &&
-          version !== 4
+          version !== 4 &&
+          version !== 5
         )
           throw new Error("Unsupported Reading Box service database version.");
         if (version < 2)
@@ -178,6 +180,14 @@ export class Catalog {
               digest(String(feed.url)),
             );
         }
+        if (version < 5)
+          this.db.exec(`
+          CREATE TABLE IF NOT EXISTS recovery(article_id TEXT PRIMARY KEY REFERENCES articles(id), owner TEXT NOT NULL, revision TEXT NOT NULL, status TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 0, recent INTEGER NOT NULL, due INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, lease TEXT, manual INTEGER NOT NULL DEFAULT 0, detail TEXT);
+          CREATE INDEX IF NOT EXISTS recovery_work ON recovery(status,priority DESC,recent DESC,due);
+          CREATE INDEX IF NOT EXISTS recovery_owner ON recovery(owner,status);
+          CREATE TABLE IF NOT EXISTS feed_use(feed_id TEXT PRIMARY KEY REFERENCES feeds(id),blocked INTEGER NOT NULL,page_policy TEXT);
+          UPDATE feeds SET etag=NULL,modified=NULL,next_poll=min(next_poll,not_before);
+          PRAGMA user_version=5;`);
       });
       this.key = Buffer.from(
         String(
@@ -473,6 +483,7 @@ export class Catalog {
   }
   private apply(f: Feed, edition: Edition, now: number, jitter: number) {
     this.aliases(f, edition.aliases);
+    this.recordFeedUse(f.id, edition);
     if (edition.noStore) {
       for (const row of this.all<StoredArticle>(
         "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
@@ -482,9 +493,39 @@ export class Catalog {
       }
     }
     if (edition.parsed) {
-      if (edition.parsed.pageRestriction) {
+      if (edition.parsed.pagePolicy) {
         for (const row of this.all<StoredArticle>(
           "SELECT * FROM articles WHERE feed_id=? AND json_extract(metadata,'$.pageCandidate') IS NOT NULL",
+          f.id,
+        )) {
+          const m = JSON.parse(row.metadata);
+          delete m.pageCandidate;
+          m.pagePolicy = edition.parsed.pagePolicy;
+          m.revision = digest(row.revision + m.pagePolicy);
+          const json = JSON.stringify(m);
+          this.run(
+            "UPDATE articles SET metadata=?,revision=? WHERE id=?",
+            json,
+            m.revision,
+            row.id,
+          );
+          this.run(
+            "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+            f.id,
+            row.id,
+            Date.parse(m.published ?? m.received),
+            json,
+          );
+          this.run(
+            "UPDATE recovery SET status='restricted',lease=NULL,detail=? WHERE article_id=?",
+            m.pagePolicy,
+            row.id,
+          );
+        }
+      }
+      if (edition.parsed.pageRestriction) {
+        for (const row of this.all<StoredArticle>(
+          "SELECT * FROM articles WHERE feed_id=? AND (body_bytes>0 OR json_extract(metadata,'$.pageCandidate') IS NOT NULL)",
           f.id,
         ))
           this.restrictContent(row, f.id, "license");
@@ -527,17 +568,29 @@ export class Catalog {
   ) {
     const m = JSON.parse(row.metadata);
     const removeText = cause !== "review";
+    if (removeText) {
+      delete m.provenance;
+      delete m.useLimits;
+    }
     m.coverage = m.coverage === "complete" ? "unverified" : m.coverage;
     m.reason = {
       no_store: "The publisher requested no storage.",
       license: "The feed’s permission for retaining this text has changed.",
       review: "The original is no longer verified.",
     }[cause];
+    if (cause === "review") delete m.provenance;
     if (cause === "license") {
       m.license = null;
       m.permissionSource = null;
     }
-    if (removeText) delete m.pageCandidate;
+    if (removeText) {
+      delete m.pageCandidate;
+      this.run(
+        "UPDATE recovery SET status='restricted',lease=NULL,detail=? WHERE article_id=?",
+        m.reason,
+        row.id,
+      );
+    }
     if (removeText)
       m.permissions = {
         display: false,
@@ -570,13 +623,18 @@ export class Catalog {
       const full = this.all<
         StoredArticle & { feed_id: string; validator_url: string }
       >(
-        "SELECT a.*,f.validator_url FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE json_extract(a.metadata,'$.coverage')='complete'",
+        "SELECT a.*,f.validator_url FROM articles a JOIN feeds f ON f.id=a.feed_id WHERE json_extract(a.metadata,'$.coverage')='complete' AND (json_extract(a.metadata,'$.provenance') IS NULL OR json_extract(a.metadata,'$.provenance')='verified-feed')",
       );
       for (const row of full) {
         const { url } = JSON.parse(row.metadata);
         if (
           proofs.get(reviewKey(row.validator_url, url)) !==
-          digest(JSON.parse(row.body).join("\n\n"))
+          digest(
+            (Array.isArray(JSON.parse(row.body))
+              ? JSON.parse(row.body)
+              : JSON.parse(row.body).paragraphs
+            ).join("\n\n"),
+          )
         )
           this.restrictContent(row, row.feed_id, "review");
       }
@@ -656,7 +714,7 @@ export class Catalog {
         discussion: e.discussion,
         topics: e.topics,
         permissionSource: e.permissionSource,
-        policyVersion: 1,
+        policyVersion: 2,
         ...content,
         withdrawn: false,
       };
@@ -683,6 +741,14 @@ export class Catalog {
           "upsert",
           json,
         );
+        this.trackArticle(
+          f.owner,
+          id,
+          revision,
+          metadata,
+          Date.parse(published ?? metadata.received),
+          now,
+        );
         used += (fits ? bytes : 0) - (prior?.body_bytes ?? 0);
       }
       for (const a of aliases)
@@ -705,6 +771,10 @@ export class Catalog {
       if (m.withdrawn) continue;
       delete m.pageCandidate;
       m.withdrawn = true;
+      this.run(
+        "UPDATE recovery SET status='restricted',lease=NULL,detail='Withdrawn' WHERE article_id=?",
+        id,
+      );
       m.coverage = "missing";
       m.reason = "The publisher withdrew this entry.";
       m.permissions = {
@@ -773,51 +843,257 @@ export class Catalog {
     if (!row) throw notFound();
     return { ...JSON.parse(row.metadata), checked: row.checked };
   }
-  setPagePolicy(origins: ReadonlySet<string>, proofs: Proofs) {
+  private trackArticle(
+    owner: string,
+    id: string,
+    revision: string,
+    article: {
+      coverage: string;
+      permissions: { display: boolean };
+      pageCandidate?: unknown;
+      subscriberOnly?: boolean;
+      pagePolicy?: string;
+      reason: string;
+    },
+    recent: number,
+    now: number,
+  ) {
+    const status = article.subscriberOnly
+      ? "access"
+      : article.coverage === "complete" && article.permissions.display
+        ? "complete"
+        : article.pageCandidate
+          ? "queued"
+          : article.pagePolicy || /no storage/.test(article.reason)
+            ? "restricted"
+            : article.permissions.display
+              ? "partial"
+              : "unavailable";
+    this.run(
+      `INSERT INTO recovery(article_id,owner,revision,status,recent,due,detail) VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(article_id) DO UPDATE SET revision=excluded.revision,status=excluded.status,recent=excluded.recent,due=excluded.due,attempts=0,lease=NULL,detail=excluded.detail`,
+      id,
+      owner,
+      revision,
+      status,
+      recent,
+      now + 15000,
+      article.pagePolicy ?? article.reason,
+    );
+  }
+  applyPublisherTerms(terms: ReadonlyMap<string, string>) {
+    const edition = JSON.stringify([...terms].sort());
+    if (
+      (this.one<{ value: string }>(
+        "SELECT value FROM settings WHERE name='publisher-terms'",
+      )?.value ?? "[]") === edition
+    )
+      return;
     this.transaction(() => {
-      const policy = digest(
-        JSON.stringify([[...origins].sort(), [...proofs.entries()].sort()]),
-      );
-      if (
-        this.one<{ value: string }>(
-          "SELECT value FROM settings WHERE name='page-origins'",
-        )?.value === policy
-      )
-        return;
-      const rows = this.all<{
-        id: string;
-        metadata: string;
-        first_seen: number;
-        feed_id: string;
-      }>(
-        "SELECT a.* FROM articles a WHERE json_extract(metadata,'$.pageCandidate.kind')='licensed'",
+      const rows = this.all<
+        StoredArticle & { feed_id: string; feed_url: string }
+      >(
+        "SELECT a.*, f.validator_url feed_url FROM articles a JOIN feeds f ON f.id=a.feed_id",
       );
       for (const row of rows) {
         const m = JSON.parse(row.metadata);
-        if (!origins.has(new URL(m.pageCandidate.url).origin))
+        const modes = [
+          terms.get(new URL(row.feed_url).origin),
+          m.url && terms.get(new URL(m.url).origin),
+        ];
+        if (m.withdrawn || !modes.some(Boolean)) continue;
+        if (modes.includes("no-retention"))
+          this.restrictContent(row, row.feed_id, "no_store");
+        else if (m.pageCandidate) {
           delete m.pageCandidate;
-        m.revision = digest(m.revision + "page-disabled");
-        const json = JSON.stringify(m);
-        this.run(
-          "UPDATE articles SET revision=?,metadata=? WHERE id=?",
-          m.revision,
-          json,
-          row.id,
-        );
-        this.run(
-          "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
-          row.feed_id,
-          row.id,
-          m.published ? Date.parse(m.published) : row.first_seen,
-          json,
-        );
+          m.pagePolicy =
+            "The recorded publisher terms prohibit page retrieval.";
+          m.revision = digest(row.revision + m.pagePolicy);
+          const json = JSON.stringify(m);
+          this.run(
+            "UPDATE articles SET metadata=?,revision=? WHERE id=?",
+            json,
+            m.revision,
+            row.id,
+          );
+          this.run(
+            "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+            row.feed_id,
+            row.id,
+            Date.parse(m.published ?? m.received),
+            json,
+          );
+          this.run(
+            "UPDATE recovery SET status='restricted',lease=NULL,detail=? WHERE article_id=?",
+            m.pagePolicy,
+            row.id,
+          );
+        }
       }
-      this.run("UPDATE feeds SET etag=NULL,modified=NULL");
       this.run(
-        "INSERT OR REPLACE INTO settings VALUES('page-origins',?)",
-        policy,
+        "UPDATE feeds SET etag=NULL,modified=NULL,next_poll=min(next_poll,not_before)",
+      );
+      this.run(
+        "INSERT OR REPLACE INTO settings VALUES('publisher-terms',?)",
+        edition,
       );
     });
+  }
+  requestRecovery(owner: string, saved: string[], start = true) {
+    this.transaction(() => {
+      // Historical bodies and marks stay in place. Reassess old rows lazily.
+      if (start)
+        this.run(
+          `INSERT OR IGNORE INTO recovery(article_id,owner,revision,status,recent,manual)
+        SELECT a.id,f.owner,a.revision,CASE WHEN json_extract(a.metadata,'$.withdrawn') THEN 'restricted'
+        WHEN json_extract(a.metadata,'$.subscriberOnly') THEN 'access'
+        WHEN json_extract(coalesce(p.metadata,a.metadata),'$.coverage')='complete' THEN 'complete'
+        ELSE 'queued' END,coalesce(unixepoch(json_extract(a.metadata,'$.published'))*1000,a.first_seen),1
+        FROM articles a JOIN feeds f ON f.id=a.feed_id LEFT JOIN page_editions p ON p.article_id=a.id WHERE f.owner=?`,
+          owner,
+        );
+      if (start) {
+        this.run(
+          "UPDATE recovery SET manual=1,due=0 WHERE owner=? AND status='queued'",
+          owner,
+        );
+        this.run(
+          "UPDATE recovery SET priority=0 WHERE owner=? AND priority!=0",
+          owner,
+        );
+      }
+      for (const id of saved)
+        this.run(
+          "UPDATE recovery SET priority=1 WHERE owner=? AND article_id=?",
+          owner,
+          id,
+        );
+    });
+    return this.recoveryStatus(owner);
+  }
+  recoveryStatus(owner: string) {
+    const counts: Record<string, number> = {};
+    for (const r of this.all<{ status: string; n: number }>(
+      "SELECT status,count(*) n FROM recovery WHERE owner=? GROUP BY status",
+      owner,
+    ))
+      counts[r.status] = r.n;
+    const latest = this.all<{ title: string; detail: string; status: string }>(
+      `SELECT json_extract(a.metadata,'$.title') title,r.detail,r.status FROM recovery r JOIN articles a ON a.id=r.article_id WHERE r.owner=? AND r.status IN ('retry','failed','access','restricted','unavailable','partial') ORDER BY r.recent DESC LIMIT 8`,
+      owner,
+    );
+    return { counts, latest };
+  }
+  claimRecovery(now: number) {
+    return this.transaction(() => {
+      const job = this.one<{
+        id: string;
+        owner: string;
+        revision: string;
+        attempts: number;
+      }>(
+        `SELECT r.article_id id,r.owner,r.revision,r.attempts FROM recovery r JOIN articles a ON a.id=r.article_id JOIN feeds f ON f.id=a.feed_id
+        WHERE r.status IN ('queued','retry','working') AND r.due<=? AND (r.manual=1 OR f.active=1)
+        ORDER BY r.priority DESC,r.recent DESC,r.article_id LIMIT 1`,
+        now,
+      );
+      if (!job) return;
+      const lease = randomUUID();
+      this.run(
+        "UPDATE recovery SET status='working',lease=?,due=?,attempts=attempts+1 WHERE article_id=?",
+        lease,
+        now + LEASE,
+        job.id,
+      );
+      return { ...job, lease };
+    });
+  }
+  legacyPolicyFeed(owner: string, id: string) {
+    const row = this.one<{ id: string }>(
+      `SELECT f.id FROM articles a JOIN feeds f ON f.id=a.feed_id LEFT JOIN feed_use u ON u.feed_id=f.id WHERE a.id=? AND f.owner=? AND u.feed_id IS NULL AND coalesce(json_extract(a.metadata,'$.policyVersion'),1)<2`,
+      id,
+      owner,
+    );
+    return row && this.get(owner, row.id);
+  }
+  recordFeedUse(feed: string, edition: Edition) {
+    if (edition.parsed || edition.noStore)
+      this.run(
+        "INSERT OR REPLACE INTO feed_use VALUES(?,?,?)",
+        feed,
+        Number(edition.noStore || !!edition.parsed?.pageRestriction),
+        edition.parsed?.pagePolicy ?? null,
+      );
+  }
+  prepareRecovery(
+    owner: string,
+    id: string,
+    terms: ReadonlyMap<string, string>,
+  ) {
+    const base = this.pageInput(owner, id);
+    if (
+      base.pageCandidate ||
+      base.policyVersion === 2 ||
+      base.withdrawn ||
+      base.subscriberOnly
+    )
+      return base;
+    const feed = this.get(owner, base.feedId);
+    const use = this.one<{ blocked: number; page_policy: string | null }>(
+      "SELECT * FROM feed_use WHERE feed_id=?",
+      feed.id,
+    );
+    // A legacy entry can reference an independently published public page. Never
+    // revive an explicit prohibition or a previously withdrawn syndication grant.
+    if (
+      base.pagePolicy ||
+      terms.has(new URL(feed.validator_url).origin) ||
+      (base.url && terms.has(new URL(base.url).origin)) ||
+      use?.blocked ||
+      use?.page_policy ||
+      /no storage|permission.*changed/.test(base.reason)
+    )
+      return base;
+    const candidate = pageCandidate(feed.validator_url, base.url, base.license);
+    if (!candidate) return base;
+    // Store the candidate in the journal without modifying a cached page edition.
+    // A legacy article with a retained page already has its original candidate.
+    const { checked: _checked, ...metadata } = base;
+    void _checked;
+    metadata.pageCandidate = candidate;
+    const json = JSON.stringify(metadata);
+    this.transaction(() => {
+      this.run(
+        "UPDATE articles SET metadata=? WHERE id=? AND revision=?",
+        json,
+        id,
+        base.revision,
+      );
+      this.run(
+        "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+        feed.id,
+        id,
+        Date.parse(base.published ?? base.received),
+        json,
+      );
+    });
+    return this.pageInput(owner, id);
+  }
+  finishRecovery(
+    id: string,
+    lease: string,
+    status: string,
+    detail: string,
+    due: number,
+  ) {
+    this.run(
+      "UPDATE recovery SET status=?,detail=?,due=?,lease=NULL WHERE article_id=? AND lease=?",
+      status,
+      detail,
+      due,
+      id,
+      lease,
+    );
   }
   recordPage(
     owner: string,
@@ -851,7 +1127,11 @@ export class Catalog {
             "The publisher-page cache is full. Open the original at the publisher.",
         };
       }
-      const suppressBody = patch.subscriberOnly && base.coverage !== "excerpt";
+      const suppressBody =
+        (patch.subscriberOnly ||
+          patch.outcome === "access" ||
+          patch.outcome === "restriction") &&
+        base.coverage !== "excerpt";
       if (suppressBody)
         body = JSON.stringify({ document: null, paragraphs: [] });
       const { checked: previousCheck, ...baseline } = base;
@@ -878,14 +1158,13 @@ export class Catalog {
             display: false,
             retain: false,
             copy: false,
+            export: false,
+            externalAI: false,
           },
         }),
         ...(document && {
           permissions: {
-            ...base.permissions,
-            display: true,
-            retain: true,
-            copy: true,
+            ...patch.permissions,
           },
         }),
       };

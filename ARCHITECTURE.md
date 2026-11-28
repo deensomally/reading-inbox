@@ -2,6 +2,11 @@
 
 **Phase 0 · 19 November 2026 · Local-first PWA and phased approach agreed. Detailed plan under review.**
 
+## Current private content architecture (Phase 2, Milestone 7B)
+
+The single-user collector uses bounded feed parsing, a durable per-edition SQLite recovery queue, and authenticated browser delivery. Prefer full publisher syndication. Fallback page extraction uses publisher markup and Mozilla Readability in an inert server-side DOM. A separate structural renderer permits only supported nodes, attributes and validated local image data. The app records the body source, confidence, rights and revision independently. The original Phase 0 observations below describe the feasibility build. The current policy, including treatment of unknown licences and terms exclusions, is in the [Milestone 7B walkthrough](docs/PRIVATE_CONTENT.md).
+
+
 Build one installable, responsive progressive web app (PWA) for Android and Windows. The first milestone prioritises a polished four-stage reader with fictitious articles and deterministic summaries. Its AI actions concern the selected article and, when supplied, its reader discussion. The main feasibility constraint is whether a publisher supplies a complete article and permits the requested use. The reader should know what is available before copying text or requesting a summary. [Product specification](PRODUCT_SPEC.md) · [Product scope exclusions](PRODUCT_SPEC.md#5-explicit-non-goals-initial-stage) · [Milestones and proposed layouts](IMPLEMENTATION_PLAN.md)
 
 ## What we verified

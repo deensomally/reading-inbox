@@ -16,6 +16,10 @@ export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export interface FeedContent {
+  provenance?:
+    "verified-feed" | "publisher-feed" | "publisher-page" | "verified-page";
+  pagePolicy?: string;
+  useLimits?: { copy: boolean; externalAI: boolean };
   document?: import("../shared/original.ts").OriginalDocument;
   pageCandidate?: import("./page-policy.ts").PageCandidate;
   subscriberOnly?: boolean;
@@ -29,6 +33,7 @@ export interface FeedContent {
     retain: boolean;
     copy: boolean;
     export: boolean;
+    externalAI?: boolean;
     summarise: false;
   };
 }
@@ -48,6 +53,7 @@ export interface Entry {
 }
 export interface ParsedFeed {
   pageRestriction?: boolean;
+  pagePolicy?: string;
   title: string;
   license: string | null;
   ttl: number;

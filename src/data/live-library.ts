@@ -22,7 +22,7 @@ export interface ChangeRequest {
   error?: string;
 }
 // Replay older snapshots once to fill in page eligibility, topics and portable identities.
-const articleFormat = 4;
+const articleFormat = 5;
 interface Checkpoint {
   id: "delivery";
   phase: "snapshot" | "changes";
@@ -46,6 +46,7 @@ export interface Delivery {
   revision: string;
   reason: string;
   withdrawn: boolean;
+  provenance?: Article["provenance"];
   pageCandidate?: { url: string };
   pageUrl?: string;
   pageCheckedAt?: number;
@@ -63,6 +64,7 @@ export function adaptDelivery(d: Delivery): Article {
     d.permissions.retain &&
     d.paragraphs.length > 0;
   const reviewed =
+    (!d.provenance || d.provenance === "verified-feed") &&
     d.url === debianReview.article &&
     d.license === debianReview.license &&
     d.coverage === "complete" &&
@@ -104,6 +106,7 @@ export function adaptDelivery(d: Delivery): Article {
     document: display ? d.document : undefined,
     pageUrl: d.pageUrl,
     pageCheckedAt: d.pageCheckedAt,
+    provenance: d.provenance,
     checkPage: !!d.pageCandidate && !d.withdrawn,
     commentsDisabled: d.commentsDisabled,
     subscriberOnly: d.subscriberOnly,
@@ -111,6 +114,7 @@ export function adaptDelivery(d: Delivery): Article {
       display,
       retain: display,
       copy: display && d.permissions.copy,
+      externalAI: display && d.permissions.externalAI === true,
       export: display && d.permissions.export === true,
       summarise: false,
     },

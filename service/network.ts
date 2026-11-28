@@ -5,6 +5,7 @@ import { get as httpsGet } from "node:https";
 import { isIP } from "node:net";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import ipaddr from "ipaddr.js";
+import { substackHost } from "./private-policy.ts";
 import robotsParser from "robots-parser";
 import {
   FeedError,
@@ -195,6 +196,7 @@ export function createDownloader(
   wire: Wire = requestPublic,
   now = Date.now,
   deadlineMs = 15000,
+  terms: ReadonlyMap<string, string> = new Map(),
 ): Download {
   const robots = new Map<
     string,
@@ -242,6 +244,11 @@ export function createDownloader(
     let permanent = true;
     for (let hop = 0; hop <= 5; hop++) {
       signal.throwIfAborted();
+      if (purpose && !readingRobots && terms.has(url.origin))
+        throw new FeedError(
+          "terms_denied",
+          "Publisher terms prohibit automated retrieval of this page.",
+        );
       const throttled = cooldowns.get(url.origin);
       if (throttled?.retryAt && throttled.retryAt > now()) throw throttled;
       cooldowns.delete(url.origin);
@@ -283,7 +290,7 @@ export function createDownloader(
       }
       if (![301, 302, 303, 307, 308].includes(result.status))
         return { ...result, url: url.href, aliases };
-      if (purpose && !readingRobots)
+      if (purpose === "image" && !readingRobots)
         throw new FeedError(
           "page_redirect",
           "The publisher redirected the reviewed resource. Open it at the publisher.",
@@ -291,7 +298,12 @@ export function createDownloader(
       const location = result.headers.get("location");
       if (!location) break;
       const next = publicUrl(location, url.href);
-      if (purpose && next.origin !== url.origin) throw badUrl();
+      if (purpose === "image" && next.origin !== url.origin) throw badUrl();
+      if (purpose === "page" && substackHost(next.href))
+        throw new FeedError(
+          "terms_denied",
+          "Substack limits automated page retrieval.",
+        );
       if (url.protocol === "https:" && next.protocol === "http:")
         throw badUrl();
       next.hash = "";

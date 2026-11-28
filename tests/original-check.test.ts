@@ -15,7 +15,6 @@ import {
   lastPassage,
   river,
   riverProof,
-  sourceOrigin,
   sourceUrl,
 } from "./originals/source.ts";
 
@@ -33,7 +32,6 @@ async function notebookService(
       ...feedApp(catalog, {
         now: () => now,
         download: makeDownload(remote.wire, () => now),
-        pageOrigins: new Set([sourceOrigin]),
         proofs: new Map([riverProof]),
       }),
     };

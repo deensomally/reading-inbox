@@ -73,7 +73,11 @@ export async function publicReview(
       )
       .toMatchObject({
         coverage: "complete",
-        headings: expect.arrayContaining(["Verified complete original"]),
+        headings: expect.arrayContaining([
+          expect.stringMatching(
+            /Verified complete original|Publisher-supplied full text/,
+          ),
+        ]),
       });
 
     const body = page.locator(".original-body");
@@ -107,14 +111,19 @@ export async function publicReview(
       "hopes for what comes next.",
     );
     await expect(
-      page.getByRole("heading", { name: "Completeness unverified" }),
+      page.getByRole("heading", {
+        name: /Completeness unverified|Publisher-supplied full text|Extracted full text/,
+      }),
     ).toBeVisible();
     await expect(
       body.getByRole("link", { name: "View publisher image" }),
     ).toBeVisible();
+    const partial = await page
+      .getByRole("heading", { name: "Completeness unverified" })
+      .isVisible();
     await expect(
       page.getByRole("button", { name: "Copy full article text" }),
-    ).toHaveCount(0);
+    ).toHaveCount(partial ? 0 : 1);
     console.log(
       platform,
       "live Creative Commons text, final passage and restricted image handoff verified",

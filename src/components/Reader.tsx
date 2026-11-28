@@ -137,7 +137,11 @@ export function Reader({
     : !allowed
       ? "Publisher only"
       : a.coverage === "complete"
-        ? "Verified complete original"
+        ? a.provenance === "publisher-feed"
+          ? "Publisher-supplied full text"
+          : a.provenance === "publisher-page"
+            ? "Extracted full text"
+            : "Verified complete original"
         : a.coverage === "excerpt"
           ? "Publisher excerpt"
           : "Completeness unverified";
@@ -250,7 +254,7 @@ export function Reader({
           "\n" +
           a.publisher +
           "\n\n"
-        : live && a.license
+        : live
           ? [a.author, a.publication, a.publisher, a.license]
               .filter(Boolean)
               .join(" · ") + "\n\n"

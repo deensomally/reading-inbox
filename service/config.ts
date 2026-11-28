@@ -66,22 +66,26 @@ export function readProofs(directory: string) {
   return proofs;
 }
 
-// Extra sources require an owner review in addition to licence evidence on both documents.
-export function readPageOrigins(directory: string): ReadonlySet<string> {
-  const path = join(directory, "original-sources.json");
-  if (!existsSync(path)) return new Set();
-  const origins: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (
-    !Array.isArray(origins) ||
-    !origins.every(
-      (value) =>
-        typeof value === "string" &&
-        publicUrl(value).origin === value &&
-        value.startsWith("https://"),
-    )
-  )
+// Site-specific contractual exclusions can be recorded without approving each
+// article or maintaining a list of sites the service is allowed to visit.
+export function readPublisherTerms(
+  directory: string,
+): ReadonlyMap<string, "feed-only" | "no-retention"> {
+  const file = join(directory, "publisher-terms.json");
+  if (!existsSync(file)) return new Map();
+  const data: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (!data || typeof data !== "object" || Array.isArray(data))
     throw Error(
-      "original-sources.json requires an array of reviewed HTTPS origins.",
+      "publisher-terms.json must map public origins to feed-only or no-retention.",
     );
-  return new Set(origins);
+  const terms = new Map<string, "feed-only" | "no-retention">();
+  for (const [origin, mode] of Object.entries(data)) {
+    if (
+      publicUrl(origin).origin !== origin ||
+      (mode !== "feed-only" && mode !== "no-retention")
+    )
+      throw Error("Invalid publisher origin or terms mode.");
+    terms.set(origin, mode);
+  }
+  return terms;
 }

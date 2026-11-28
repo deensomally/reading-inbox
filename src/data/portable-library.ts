@@ -1,3 +1,4 @@
+import { debianReview, debianNotice } from "../../shared/reviewed-article";
 import { originalText } from "../../shared/original";
 import { adapt, fixtures } from "./fixtures";
 import {
@@ -60,12 +61,32 @@ function publicLabel(text?: string) {
   return text?.replace(/(?:https?:\/\/|www\.)[^\s<>]+/gi, "[link omitted]");
 }
 function publicLicense(value?: string) {
+  if (value === debianReview.license) return value;
   if (!value?.includes("://")) return publicLabel(value);
   return /^https:\/\/creativecommons\.org\/(?:licenses|publicdomain)\/[a-z0-9./-]+\/?$/i.test(
     value,
   )
     ? value
     : undefined;
+}
+function backupSource(a: Article) {
+  if (!a.publisher) return;
+  try {
+    const u = new URL(a.publisher);
+    if (!["https:", "http:"].includes(u.protocol) || u.username || u.password)
+      return;
+    for (const key of [...u.searchParams.keys()])
+      if (key.startsWith("utm_")) u.searchParams.delete(key);
+    if (
+      u.search ||
+      /(?:private|token|secret|password|signature)(?:[=/]|$)/i.test(u.pathname)
+    )
+      return;
+    u.hash = "";
+    return u.href;
+  } catch {
+    return;
+  }
 }
 function stateOf(s: ReadingState): PortableState {
   return {
@@ -134,8 +155,27 @@ export async function exportLibrary(
           entry.omissions.push(
             "Body omitted because this article is not saved.",
           );
-        else if (grant.body) entry.body = textOf(a);
-        else
+        else if (grant.body) {
+          const source = backupSource(a);
+          if (!demo && !source && !a.license?.includes("/publicdomain/zero/"))
+            entry.omissions.push(
+              "Body omitted because its attribution link cannot be exported safely.",
+            );
+          else {
+            entry.body = textOf(a);
+            if (source && !demo)
+              entry.attribution = {
+                source,
+                notice:
+                  a.license === debianReview.license
+                    ? debianNotice.replace(
+                        debianReview.author,
+                        a.author ?? a.publication,
+                      )
+                    : undefined,
+              };
+          }
+        } else
           entry.omissions.push(
             a.withdrawn
               ? "Body omitted because the edition was withdrawn."

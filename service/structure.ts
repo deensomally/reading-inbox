@@ -43,6 +43,9 @@ const suppress = new Set([
   "style",
   "template",
   "form",
+  "nav",
+  "footer",
+  "aside",
   "input",
   "button",
   "link",
@@ -91,7 +94,21 @@ export function structure(body: HtmlNode[], base: string): OriginalDocument {
     }
     if (!element(n)) return [];
     const tag = aliases[n.tagName] ?? n.tagName;
-    if (suppress.has(tag)) return [];
+    if (
+      tag === "p" &&
+      n.childNodes.some(
+        (c) => "value" in c && /appeared first on/i.test(c.value),
+      ) &&
+      elements(n).some((e) => e.tagName === "a")
+    )
+      return [];
+    if (
+      suppress.has(tag) ||
+      /(?:^|[ _-])(?:advertisement|related-posts|recommendations|cookie-banner|social-share|newsletter-signup)(?:$|[ _-])/i.test(
+        attr(n, "class") + " " + attr(n, "id"),
+      )
+    )
+      return [];
     if (
       attr(n, "aria-hidden") === "true" ||
       n.attrs.some((a) => a.name === "hidden") ||

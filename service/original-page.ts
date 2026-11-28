@@ -1,5 +1,12 @@
 import { readablePng } from "./png.ts";
-import { parse, serialize, type DefaultTreeAdapterMap } from "parse5";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
+import {
+  parse,
+  parseFragment,
+  serialize,
+  type DefaultTreeAdapterMap,
+} from "parse5";
 import {
   originalText,
   type OriginalDocument,
@@ -17,6 +24,13 @@ import {
   type Element,
   type HtmlNode,
 } from "./structure.ts";
+import {
+  openLicense,
+  privateUses,
+  previewEnding,
+  paywallText,
+  storageBan,
+} from "./private-policy.ts";
 import { ccBy, type PageCandidate } from "./page-policy.ts";
 import { decodeDocument } from "./parser.ts";
 import {
@@ -33,6 +47,7 @@ export interface PageInput {
   title: string;
   author: string | null;
   license: string | null;
+  useLimits?: { copy: boolean; externalAI: boolean };
   retained?: {
     pageUrl?: string;
     license?: string;
@@ -41,8 +56,11 @@ export interface PageInput {
 }
 export interface PageEdition {
   document?: OriginalDocument;
-  coverage?: "complete" | "unverified";
-  license?: string;
+  coverage?: "complete" | "unverified" | "excerpt";
+  license?: string | null;
+  provenance?: "verified-page" | "publisher-page";
+  permissions?: ReturnType<typeof privateUses>;
+  outcome?: "access" | "restriction" | "technical" | "unavailable" | "partial";
   reason: string;
   subscriberOnly?: boolean;
   commentsDisabled?: boolean;
@@ -51,7 +69,10 @@ export interface PageEdition {
 type PageCheck =
   | { edition: PageEdition; issue?: PublisherCheckIssue }
   | { edition?: never; issue: PublisherCheckIssue };
-const blocked = (reason: string): PageEdition => ({ reason });
+const blocked = (
+  reason: string,
+  outcome: PageEdition["outcome"] = "technical",
+): PageEdition => ({ reason, outcome });
 const temporaryStatus = (status: number) =>
   status === 408 ||
   status === 425 ||
@@ -96,26 +117,47 @@ const words = (e: HtmlNode): string =>
 const normal = (s: string) => s.replace(/\s+/g, " ").trim();
 const hasClass = (e: Element, cls: string) =>
   attr(e, "class").split(/\s+/).includes(cls);
-const restriction =
-  /\b(?:all rights reserved|reproduced with permission|used with permission|not (?:covered|included) (?:by|in) (?:the|this) licen[cs]e)\b/i;
-const teaser =
-  /\b(?:continue reading|read (?:the )?full (?:article|post)|subscribe to (?:read|continue)|for (?:paid|paying) subscribers|subscriber[- ]only|sign in to (?:read|continue)|this article continues)\b/i;
 const noArchive =
-  /(?:^|[,;\s:])(?:none|noarchive|nosnippet|no-store|private)(?:$|[,;\s])/i;
+  /(?:^|[,;\s:])(?:none|noarchive|nosnippet|no-store)(?:$|[,;\s])/i;
 const partial =
   "The publisher page could not be verified as a complete edition.";
+const junk =
+  /(?:^|[\s_-])(?:advertisement|sidebar|cookie(?:-banner|-notice)?|newsletter-signup|related-posts|recommendations|social-share|post-footer|post-meta|share-buttons|comments-area|tracking-pixel)(?:$|[\s_-])/i;
+function clean(node: HtmlNode) {
+  if (!("childNodes" in node)) return;
+  node.childNodes = node.childNodes.filter(
+    (n) =>
+      !element(n) ||
+      !(
+        [
+          "nav",
+          "aside",
+          "footer",
+          "form",
+          "script",
+          "style",
+          "noscript",
+          "button",
+          "template",
+        ].includes(n.tagName) ||
+        ["navigation", "complementary", "banner"].includes(attr(n, "role")) ||
+        junk.test(attr(n, "class") + " " + attr(n, "id"))
+      ),
+  );
+  for (const n of node.childNodes) clean(n);
+}
 function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
   const { kind, url } = input.pageCandidate;
   const all = elements(root);
   const meta = (key: string) =>
-    all.find((e) => e.tagName === "meta" && attr(e, "property") === key);
-  const canonical = all
-    .filter((e) => e.tagName === "link" && rel(e, "canonical"))
-    .map((e) => attr(e, "href"));
-  const og = meta("og:url");
-  if (!canonical.length && og) canonical.push(attr(og, "content"));
-  if (!canonical.length || canonical.some((c) => safeLink(c, url) !== url))
-    return blocked(partial);
+    all
+      .filter(
+        (e) =>
+          e.tagName === "meta" &&
+          [attr(e, "name"), attr(e, "property")].includes(key),
+      )
+      .map((e) => attr(e, "content"))
+      .join(" ");
   if (
     all.some(
       (e) =>
@@ -130,32 +172,106 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
     )
   )
     return {
+      ...blocked("The publisher identifies this as subscriber-only.", "access"),
       subscriberOnly: true,
-      reason:
-        "The publisher identifies this as restricted content. Sign in on the publisher site.",
     };
+  const accessText = all.some(
+    (e) =>
+      ["p", "aside", "section", "div"].includes(e.tagName) &&
+      e.childNodes.length <= 4 &&
+      e.childNodes.some((n) => "value" in n && paywallText.test(n.value)),
+  );
+  if (accessText)
+    return {
+      ...blocked(
+        "The publisher supplies a sign-in or subscriber preview.",
+        "access",
+      ),
+      subscriberOnly: true,
+    };
+  const directives = [
+    meta("robots"),
+    meta("readingbox"),
+    meta("rights"),
+    meta("copyright"),
+    meta("tdm-reservation") === "1" ? "noai" : "",
+  ].join(" ");
+  if (noArchive.test(directives) || storageBan.test(directives))
+    return blocked("The publisher prohibits offline storage.", "restriction");
   if (
     all.some(
       (e) =>
-        (e.tagName === "meta" &&
-          /^(?:robots|readingbox)$/i.test(attr(e, "name")) &&
-          noArchive.test(attr(e, "content"))) ||
-        rel(e, "next"),
+        e.tagName === "a" &&
+        /^(?:https?:\/\/)?substack\.com\/tos(?:[/?#]|$)/i.test(attr(e, "href")),
     )
   )
     return blocked(
-      "The publisher limits storage or splits the article across pages. Continue on the publisher site.",
+      "Substack’s terms restrict automated page extraction. Use the syndicated edition.",
+      "restriction",
     );
-  const title = all.find(
-    (e) => e.tagName === "h1" && normal(words(e)) === normal(input.title),
+  const canonical = all.find(
+    (e) => e.tagName === "link" && rel(e, "canonical"),
   );
-  if (!title || !input.author)
-    return blocked("The publisher title or attribution could not be verified.");
+  const canonicalUrl = canonical && safeLink(attr(canonical, "href"), url);
+  if (canonical && canonicalUrl !== url)
+    return blocked("The canonical page identifies a different article.");
+  if (all.some((e) => rel(e, "next")))
+    return blocked(
+      "The publisher splits this article across pages.",
+      "partial",
+    );
+  if (
+    all.some(
+      (e) =>
+        /^(?:p|small|footer)$/.test(e.tagName) &&
+        storageBan.test(normal(words(e))),
+    )
+  )
+    return blocked(
+      "The publisher explicitly prohibits offline storage.",
+      "restriction",
+    );
+  const h1s = all.filter((e) => e.tagName === "h1");
+  const normalTitle = (t: string) =>
+    normal(t)
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  const title = normalTitle(input.title);
+  const matches = [
+    meta("og:title"),
+    ...h1s.map(words),
+    ...all.filter((e) => e.tagName === "title").map(words),
+  ].some(
+    (t) =>
+      normalTitle(t) === title ||
+      (title.length > 5 && normalTitle(t).startsWith(title + " ")),
+  );
+  if (!matches)
+    return blocked("The page title does not identify the subscribed article.");
+  const declarations = all.filter(
+    (e) =>
+      (e.tagName === "link" ||
+        (e.tagName === "a" &&
+          e.parentNode &&
+          element(e.parentNode) &&
+          e.parentNode.tagName === "footer")) &&
+      rel(e, "license"),
+  );
+  const grants = [
+    ...new Set(
+      declarations.map((e) => openLicense(safeLink(attr(e, "href"), url))),
+    ),
+  ];
+  let license = grants.length === 1 ? grants[0] : null;
+  if (input.license && grants.length && !grants.includes(input.license))
+    return blocked(
+      "The page and feed give conflicting reuse terms.",
+      "restriction",
+    );
   let source: HtmlNode[] | undefined;
-  let license: string | undefined;
-  const licenceLinks = all
-    .filter((e) => rel(e, "license"))
-    .map((e) => safeLink(attr(e, "href"), url));
+  let verified = false;
+  let confident = false;
   if (kind === "debian") {
     const container = single(all.filter((e) => hasClass(e, "article")));
     const body =
@@ -165,101 +281,84 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
           .filter(element)
           .filter((e) => e.tagName === "div" && !hasClass(e, "content-title")),
       );
-    const byline = container?.childNodes
-      .filter(element)
-      .find((e) => hasClass(e, "content-title"));
-    if (
-      !body ||
-      !byline ||
-      !elements(byline).includes(title) ||
-      !elements(byline).some(
-        (e) => e.tagName === "strong" && normal(words(e)) === input.author,
-      ) ||
-      digest(normal(serialize(body))) !== input.pageCandidate.feedDigest
-    )
-      return blocked(partial);
-    source = body.childNodes;
-    license = debianReview.license;
+    if (body) {
+      source = body.childNodes;
+      confident = true;
+      verified =
+        digest(normal(serialize(body))) === input.pageCandidate.feedDigest;
+      license ??= debianReview.license;
+    }
   } else if (kind === "cc-story") {
     const main = single(all.filter((e) => e.tagName === "main"));
-    const header = main?.childNodes
-      .filter(element)
-      .find((e) => e.tagName === "header");
     const body = main?.childNodes
       .filter(element)
       .find((e) => hasClass(e, "content"));
+    const header = main?.childNodes
+      .filter(element)
+      .find((e) => e.tagName === "header");
+    const end =
+      body?.childNodes.findIndex(
+        (n) => element(n) && hasClass(n, "pub-date"),
+      ) ?? -1;
+    if (body && end >= 0) {
+      source = [
+        ...(header?.childNodes.filter(
+          (n) => element(n) && n.tagName === "figure",
+        ) ?? []),
+        ...body.childNodes.slice(0, end),
+      ];
+      confident = true;
+    }
     if (
-      !header ||
-      !body ||
-      !elements(header).includes(title) ||
-      !elements(header).some(
-        (e) => e.tagName === "a" && normal(words(e)) === input.author,
-      ) ||
-      !all.some(
+      all.some(
         (e) =>
           e.tagName === "footer" &&
-          elements(e).some(
-            (a) => a.tagName === "a" && safeLink(attr(a, "href"), url) === ccBy,
-          ),
+          elements(e).some((a) => safeLink(attr(a, "href"), url) === ccBy),
       )
     )
-      return blocked(partial);
-    // The WordPress template places date and navigation after the body.
-    const end = body.childNodes.findIndex(
-      (n) => element(n) && hasClass(n, "pub-date"),
-    );
-    if (end < 0) return blocked(partial);
-    source = [
-      ...header.childNodes.filter((n) => element(n) && n.tagName === "figure"),
-      ...body.childNodes.slice(0, end),
-    ];
-    license = ccBy;
-  } else {
-    if (!input.license || !licenceLinks.length)
-      return blocked("The page supplies no matching reuse licence.");
-    const article = single(all.filter((e) => e.tagName === "article"));
-    if (
-      !article ||
-      !elements(article).includes(title) ||
-      !elements(article).some(
-        (e) =>
-          (rel(e, "author") || attr(e, "itemprop") === "author") &&
-          normal(words(e)) === input.author,
-      )
-    )
-      return blocked(partial);
-    const boundary = single(
-      elements(article).filter((e) =>
-        attr(e, "itemprop").split(/\s+/).includes("articleBody"),
-      ),
-    );
-    // A publisher articleBody establishes a precise boundary. Other semantic articles
-    // are readable candidates, but an inferred boundary alone cannot prove completeness.
-    source =
-      boundary?.childNodes ??
-      article.childNodes.filter(
-        (e) =>
-          !(
-            element(e) &&
-            (e === title || ["header", "footer", "nav"].includes(e.tagName))
-          ),
-      );
-    license = input.license;
-    if (!boundary) return { source, license, inferred: true, all };
-    if (
-      article.childNodes.some(
-        (n) =>
-          element(n) &&
-          n !== boundary &&
-          !elements(n).includes(boundary) &&
-          !["header", "footer", "nav", "h1"].includes(n.tagName) &&
-          !rel(n, "author") &&
-          normal(words(n)),
-      )
-    )
-      return blocked(partial);
+      license ??= ccBy;
   }
-  return { source, license, all, inferred: false };
+  const boundary = single(
+    all.filter(
+      (e) =>
+        /^(articleBody)$/.test(attr(e, "itemprop")) ||
+        /(?:^|\s)(?:entry-content|post-content|post-body|article-content)(?:\s|$)/.test(
+          attr(e, "class"),
+        ),
+    ),
+  );
+  if (!source && boundary) {
+    clean(boundary);
+    source = boundary.childNodes;
+    confident = true;
+  }
+  if (!source) {
+    // LinkeDOM parses inert markup. Readability never gets a browser window or network loader.
+    const article =
+      single(all.filter((e) => e.tagName === "article")) ??
+      single(all.filter((e) => e.tagName === "main"));
+    clean(root);
+    const last =
+      article &&
+      elements(article)
+        .filter((e) => e.tagName === "p" && normal(words(e)))
+        .at(-1);
+    const { document } = parseHTML(serialize(root));
+    const parsed = new Readability(document, {
+      charThreshold: 80,
+      maxElemsToParse: 30000,
+    }).parse();
+    if (!parsed?.content)
+      return blocked("No readable public article was found.");
+    source = parseFragment(parsed.content).childNodes;
+    // Readability can discard trailing material. Compare its end with the independent
+    // source boundary before upgrading the completeness label.
+    const tail = normal(source.map(words).join(" "));
+    confident =
+      !!last && tail.endsWith(normal(words(last))) && tail.length >= 120;
+  }
+  for (const n of source) clean(n);
+  return { source, license, directives, verified, confident, all };
 }
 function images(nodes: OriginalNode[]): Exclude<OriginalNode, string>[] {
   return nodes.flatMap((n) =>
@@ -281,7 +380,7 @@ async function includeImages(
   doc: OriginalDocument,
   source: HtmlNode[],
   url: string,
-  license: string,
+  license: string | null,
   download: Download,
   now: () => number,
   retained?: OriginalDocument,
@@ -289,7 +388,9 @@ async function includeImages(
   const licensed = new Set(
     source
       .flatMap(elements)
-      .filter((e) => e.tagName === "img" && imageLicense(e, url, license))
+      .filter(
+        (e) => e.tagName === "img" && license && imageLicense(e, url, license),
+      )
       .map((e) => safeLink(attr(e, "src"), url)),
   );
   let requests = 0;
@@ -346,7 +447,7 @@ export async function extractPage(
   download: Download,
   now = Date.now,
 ): Promise<PageCheck> {
-  const { url } = input.pageCandidate;
+  let { url } = input.pageCandidate;
   try {
     const response = await retrieve(url, "page", download, now);
     if ("issue" in response) return response;
@@ -358,68 +459,66 @@ export async function extractPage(
       return {
         edition: blocked(
           "The publisher requires access or refused this request. Open the post there.",
+          "access",
         ),
       };
     if (
       response.status !== 200 ||
-      response.url !== url ||
       !/^text\/html(?:;|$)/i.test(response.headers.get("content-type") ?? "") ||
       noArchive.test(response.headers.get("cache-control") ?? "") ||
       noArchive.test(response.headers.get("x-robots-tag") ?? "")
     )
       return {
-        edition: blocked("This publisher page is unavailable for retention."),
+        edition: blocked(
+          "This publisher page is unavailable for retention.",
+          response.status === 404 || response.status === 410
+            ? "unavailable"
+            : response.status === 200 &&
+                (noArchive.test(response.headers.get("cache-control") ?? "") ||
+                  noArchive.test(response.headers.get("x-robots-tag") ?? ""))
+              ? "restriction"
+              : "technical",
+        ),
       };
     const html = decodeDocument(
       response.bytes,
       response.headers.get("content-type"),
     );
-    const result = bounds(parse(html), input);
+    url = response.url;
+    const result = bounds(parse(html), {
+      ...input,
+      pageCandidate: { ...input.pageCandidate, url },
+    });
     if (!("source" in result)) return { edition: result };
-    const { source, license, inferred, all } = result;
-    const semantic = source.flatMap(elements);
-    const text = normal(source.map(words).join(" "));
-    if (
-      restriction.test(text) ||
-      all.some(
-        (e) =>
-          rel(e, "license") &&
-          safeLink(attr(e, "href"), url)?.replace(/\/$/, "") !==
-            license.replace(/\/$/, ""),
-      )
-    )
-      return { edition: blocked("The page contains conflicting reuse terms.") };
-    if (teaser.test(text))
-      return {
-        edition: {
-          reason:
-            "The publisher supplies a preview. Continue on the publisher site.",
-          subscriberOnly: /subscrib|sign in/i.test(text),
-        },
-      };
+    const { source, license, directives, confident, all } = result;
     const document = structure(source, url);
     const plain = originalText(document.nodes);
-    if (!plain || !semantic.some((e) => e.tagName === "p"))
-      return { edition: blocked(partial) };
-    if (
-      input.pageCandidate.kind === "licensed" &&
-      digest(plain) !== input.reviewedText &&
-      digest(plain) !== input.pageCandidate.feedDigest
-    )
+    if (!plain) return { edition: blocked(partial) };
+    if (storageBan.test(plain))
+      return {
+        edition: blocked(
+          "The article explicitly prohibits storage.",
+          "restriction",
+        ),
+      };
+    if (paywallText.test(plain))
+      return {
+        edition: {
+          ...blocked("The publisher supplies a restricted preview.", "access"),
+          subscriberOnly: true,
+        },
+      };
+    const isPreview = previewEnding.test(plain.trim());
+    const verified =
+      result.verified ||
+      (!!input.reviewedText && digest(plain) === input.reviewedText);
+    if (input.reviewedText && !verified)
       document.limitations.push(
-        "This page edition has no independent match for its complete text and ending.",
+        "This edition differs from the previously checked text.",
       );
-    if (
-      input.pageCandidate.kind === "cc-story" &&
-      digest(plain) !==
-        "20550f9436c4e3769fa27490d025728ab020a0c64641e22807b4778f399b95a8"
-    )
+    if (!confident && !verified)
       document.limitations.push(
-        "The publisher has changed the previously reviewed edition.",
-      );
-    if (inferred)
-      document.limitations.push(
-        "The publisher did not mark the exact article body.",
+        "The extracted ending could not be confirmed against the publisher’s article boundary.",
       );
     const retained = input.retained;
     const issue = await includeImages(
@@ -433,6 +532,21 @@ export async function extractPage(
         ? retained.document
         : undefined,
     );
+    const uses = privateUses(
+      true,
+      license,
+      directives +
+        " " +
+        plain +
+        " " +
+        (response.headers.get("x-robots-tag") ?? ""),
+    );
+
+    if (input.useLimits?.copy) {
+      uses.copy = false;
+      uses.export = false;
+    }
+    if (input.useLimits?.externalAI) uses.externalAI = false;
     const replies = all.find(
       (e) =>
         e.tagName === "link" &&
@@ -447,10 +561,19 @@ export async function extractPage(
       edition: {
         document,
         license,
-        coverage: document.limitations.length ? "unverified" : "complete",
+        coverage: isPreview
+          ? "excerpt"
+          : document.limitations.length
+            ? "unverified"
+            : "complete",
+        provenance: verified ? "verified-page" : "publisher-page",
+        permissions: uses,
+        ...(isPreview && { outcome: "partial" }),
         reason:
           document.limitations.join(" ") ||
-          "The complete body and ending were verified on the permitted publisher page.",
+          (isPreview
+            ? "The publisher supplies a partial article."
+            : "Article extracted from the public publisher page."),
         discussion: replies ? safeLink(attr(replies, "href"), url) : undefined,
         commentsDisabled:
           all.some(
@@ -466,6 +589,10 @@ export async function extractPage(
         err instanceof FeedError
           ? err.message
           : "The article could not be safely extracted.",
+        err instanceof FeedError &&
+          ["robots_denied", "terms_denied"].includes(err.code)
+          ? "restriction"
+          : "technical",
       ),
     };
   }

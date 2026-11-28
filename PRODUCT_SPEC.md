@@ -1,5 +1,10 @@
 # Reading Box — Product Specification (V1)
 
+## Private single-user edition
+
+The first Reading Box build is exclusively for the owner’s private reading on paired devices. Prefer the publisher’s ordinary public syndication. Retain supplied text locally when applicable terms allow and automatically try the linked, publicly readable page for incomplete editions. Unknown copyright metadata conveys no licence for redistribution, portable copying or external processing. Respect explicit restrictions, robots, authenticated and paid boundaries, withdrawals and applicable terms. Carry provenance and separate permissions for display, local retention, copying, backup and external processing. Offer retrospective content recovery without resetting the library. [Private content policy and acceptance](docs/PRIVATE_CONTENT.md)
+
+
 **Status:** Agreed product direction; technical implementation to be designed with Codex.  
 **Target:** Open-source, cross-device reading application, initially optimised for Android and Windows PC.  
 **Product name:** Reading Box.

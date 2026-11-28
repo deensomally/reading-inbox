@@ -3,17 +3,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { once } from "node:events";
+import { pathToFileURL } from "node:url";
 import { preview } from "vite";
 import { Catalog, INTERVAL } from "../../service/catalog.ts";
 import { feedApp } from "../../service/app.ts";
 import { readProofs } from "../../service/config.ts";
 import { publisher, fixture, rss, item, example } from "../feeds/publisher.ts";
-import { addNotebook, sourceOrigin, riverProof } from "../originals/source.ts";
+import { addNotebook, riverProof } from "../originals/source.ts";
 import { debianReview } from "../../shared/reviewed-article.ts";
 import { feedProxyPath } from "../../shared/reader-launch.ts";
 export async function ownerPreview(
   usePublicNetwork = false,
   readerDirectory = "dist",
+  releasedService?: string,
 ) {
   const directory = mkdtempSync(join(tmpdir(), "reading-box-owner-"));
   const publisherSite = await publisher();
@@ -61,15 +63,28 @@ export async function ownerPreview(
     db: Catalog,
     service: ReturnType<typeof feedApp> | undefined;
   async function start() {
-    db = new Catalog(join(directory, "feeds.sqlite"));
+    const Database = releasedService
+      ? ((
+          await import(
+            pathToFileURL(join(releasedService, "service/catalog.ts")).href
+          )
+        ).Catalog as typeof Catalog)
+      : Catalog;
+    const makeApp = releasedService
+      ? ((
+          await import(
+            pathToFileURL(join(releasedService, "service/app.ts")).href
+          )
+        ).feedApp as typeof feedApp)
+      : feedApp;
+    db = new Database(join(directory, "feeds.sqlite"));
     const proofs = readProofs(directory);
     db.reconcileProofs(proofs);
-    service = feedApp(db, {
+    service = makeApp(db, {
       readerPort: port,
       proofs,
       ...(!usePublicNetwork && {
         proofs: new Map([...proofs, riverProof]),
-        pageOrigins: new Set([sourceOrigin]),
         now: () => now,
         jitter: () => 0,
         download: publisherSite.download,
@@ -92,6 +107,14 @@ export async function ownerPreview(
     publisher: publisherSite,
     start,
     stop,
+    advanceRecoveryClock() {
+      now += INTERVAL + 1;
+    },
+    async upgradeService() {
+      await stop();
+      releasedService = undefined;
+      await start();
+    },
     setNotebookPageStatus(status: 200 | 403 | 503) {
       if (status === 200) addNotebook(publisherSite);
       else {

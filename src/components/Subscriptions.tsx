@@ -1,3 +1,4 @@
+import { ContentRecovery } from "./ContentRecovery";
 import { PortableSubscriptions } from "./PortableSubscriptions";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -372,6 +373,13 @@ export function Subscriptions({
             ? "Checking the feed service…"
             : collector.feedback)}
       </p>
+      {paired && !connect && collector.session && (
+        <ContentRecovery
+          library={library}
+          session={collector.session}
+          sync={collector.sync}
+        />
+      )}
       {paired && (
         <div className="feed-actions">
           <button
