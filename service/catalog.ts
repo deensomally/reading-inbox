@@ -904,6 +904,13 @@ export class Catalog {
       ...(page?.body && JSON.parse(page.body)),
     };
   }
+  pageGone(id: string) {
+    // A changed feed edition invalidates this page row in the same transaction.
+    return !!this.one(
+      "SELECT 1 FROM page_editions WHERE article_id=? AND json_extract(metadata,'$.outcome')='unavailable'",
+      id,
+    );
+  }
   pageInput(owner: string, id: string) {
     const row = this.one<{ metadata: string; checked: number | null }>(
       "SELECT a.metadata,p.checked FROM articles a JOIN feeds f ON f.id=a.feed_id LEFT JOIN page_editions p ON p.article_id=a.id WHERE f.owner=? AND a.id=?",

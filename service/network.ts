@@ -152,6 +152,7 @@ export async function readResponse(response: IncomingMessage, limit: number) {
       "age",
       "content-type",
       "x-robots-tag",
+      "tdm-reservation",
       "retry-after",
     ]) {
       const value = response.headers[name];

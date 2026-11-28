@@ -52,3 +52,10 @@ export function privateUses(
 export function substackHost(url: string) {
   return /(?:^|\.)substack\.com$/i.test(new URL(url).hostname);
 }
+
+export function responseDirectives(headers: Headers) {
+  return [
+    headers.get("x-robots-tag"),
+    headers.get("tdm-reservation")?.trim() === "1" ? "noai" : "",
+  ].join(" ");
+}

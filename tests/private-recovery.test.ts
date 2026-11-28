@@ -43,6 +43,8 @@ it("recovers saved before recent across a crash, honours retry timing and stops 
     db.requestRecovery("owner", [saved.id]);
     expect(await worker.recoverOne()).toBe(false);
     now += 300000;
+    await worker.original("owner", recent.id);
+    expect(remote.calls.filter((c) => c.url === "/b")).toHaveLength(1);
     remote.routes.set("/a", {
       headers: { "content-type": "text/html" },
       body: '<title>Saved dispatch</title><article><h1>Saved dispatch</h1><div class="entry-content"><p>First note.</p><p>Final saved passage.</p></div></article>',
@@ -313,4 +315,44 @@ it("distinguishes a described lead illustration from a missing figure inside the
     "Photo by the author.",
   );
   expect((await read("", image)).edition?.coverage).toBe("unverified");
+});
+
+it("distinguishes a WordPress link to the next post from a continuation of the same article", async () => {
+  const url = example.replace("/feed", "/dispatch");
+  const read = (navigation: string) =>
+    extractPage(
+      {
+        title: "Dispatch",
+        license: null,
+        author: null,
+        pageCandidate: { kind: "licensed", url },
+      },
+      async () => ({
+        url,
+        status: 200,
+        aliases: [url],
+        headers: new Headers({
+          "content-type": "text/html",
+          "tdm-reservation": "1",
+        }),
+        bytes: Buffer.from(
+          '<title>Dispatch</title><link rel="license" href="https://creativecommons.org/publicdomain/zero/1.0/"><article><div class="entry-content"><p>Opening.</p><p>Closing.</p></div></article>' +
+            navigation,
+        ),
+      }),
+    );
+  expect(
+    (
+      await read(
+        '<nav class="post-navigation"><a rel="next" href="/another-post">Next post</a></nav>',
+      )
+    ).edition,
+  ).toMatchObject({
+    coverage: "complete",
+    permissions: { copy: true, export: true, externalAI: false },
+  });
+  expect(
+    (await read('<a rel="next" href="/dispatch/2">Continue</a>')).edition
+      ?.outcome,
+  ).toBe("partial");
 });

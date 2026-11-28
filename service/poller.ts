@@ -1,4 +1,4 @@
-import { restrictedUses } from "./private-policy.ts";
+import { restrictedUses, responseDirectives } from "./private-policy.ts";
 import type { Outline } from "../shared/opml.ts";
 import { Catalog, describeFeed, type Edition, type Feed } from "./catalog.ts";
 import { createDownloader, subscriptionUrl } from "./network.ts";
@@ -110,7 +110,7 @@ export class Poller {
           !storageRestricted(response.headers) &&
           this.terms.get(new URL(response.url).origin) !== "no-retention",
         terms: this.terms,
-        headerDirectives: response.headers.get("x-robots-tag") ?? "",
+        headerDirectives: responseDirectives(response.headers),
         proofs: this.proofs,
       });
     } else if (
@@ -130,7 +130,7 @@ export class Poller {
       noStore,
       useLimits:
         parsed?.useLimits ??
-        restrictedUses(response.headers.get("x-robots-tag") ?? ""),
+        restrictedUses(responseDirectives(response.headers)),
       freshness: freshness(response.headers, this.now()),
       etag: noStore
         ? null
@@ -256,6 +256,7 @@ export class Poller {
       if (
         input.pageCandidate &&
         !input.withdrawn &&
+        !this.catalog.pageGone(id) &&
         (input.checked === null || this.now() - input.checked >= 60000)
       ) {
         const feed = this.catalog.get(owner, input.feedId);

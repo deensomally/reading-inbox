@@ -27,6 +27,7 @@ import {
 import {
   openLicense,
   privateUses,
+  responseDirectives,
   previewEnding,
   paywallText,
   storageBan,
@@ -216,7 +217,19 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
   const canonicalUrl = canonical && safeLink(attr(canonical, "href"), url);
   if (canonical && canonicalUrl !== url)
     return blocked("The canonical page identifies a different article.");
-  if (all.some((e) => rel(e, "next")))
+  if (
+    all.some((e) => {
+      if (!rel(e, "next")) return false;
+      for (
+        let parent = e.parentNode;
+        parent && element(parent);
+        parent = parent.parentNode
+      )
+        if (parent.tagName === "nav" && hasClass(parent, "post-navigation"))
+          return false;
+      return true;
+    })
+  )
     return blocked(
       "The publisher splits this article across pages.",
       "partial",
@@ -248,7 +261,11 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
         )
       : undefined;
   const weblogTitles = weblogEntry
-    ? ["release " + title, title.replace(/^quoting /, "a quote from ")]
+    ? [
+        "release " + title,
+        "tool " + title,
+        title.replace(/^quoting /, "a quote from "),
+      ]
     : [];
   const matches = [
     meta("og:title"),
@@ -326,7 +343,9 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
       );
       for (const image of figures
         .flatMap(elements)
-        .filter((e) => e.tagName === "img" && attr(e, "alt").trim())) {
+        .filter(
+          (e) => e.tagName === "img" && e.attrs.some((a) => a.name === "alt"),
+        )) {
         const href = safeLink(attr(image, "src"), url);
         if (href && !bodyImages.has(href)) leadImages.add(href);
       }
@@ -418,7 +437,7 @@ function imageLicense(img: Element, url: string, license: string) {
   );
 }
 const leadImageNote =
-  "The publisher’s lead illustration is linked with its description. The article text is retained.";
+  "The publisher’s lead illustration is linked separately from the article text.";
 
 async function includeImages(
   doc: OriginalDocument,
@@ -583,11 +602,7 @@ export async function extractPage(
     const uses = privateUses(
       true,
       license,
-      directives +
-        " " +
-        plain +
-        " " +
-        (response.headers.get("x-robots-tag") ?? ""),
+      directives + " " + plain + " " + responseDirectives(response.headers),
     );
 
     if (input.useLimits?.copy) {

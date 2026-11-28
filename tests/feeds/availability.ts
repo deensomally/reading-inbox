@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as pause } from "node:timers/promises";
+import { responseDirectives } from "../../service/private-policy.ts";
 import { createDownloader } from "../../service/network.ts";
 import { decodeDocument, parseFeed } from "../../service/parser.ts";
 import { extractPage } from "../../service/original-page.ts";
@@ -108,7 +109,7 @@ try {
             res.headers.get("x-robots-tag"),
           ].join(" "),
         ),
-        headerDirectives: res.headers.get("x-robots-tag") ?? "",
+        headerDirectives: responseDirectives(res.headers),
       };
       const before = legacy.parseFeed(xml, res.url, opts),
         after = parseFeed(xml, res.url, opts);

@@ -17,6 +17,7 @@ export function ContentRecovery({
 }) {
   const [progress, setProgress] = useState<Progress>();
   const [busy, setBusy] = useState(false);
+  const [disconnected, setDisconnected] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
     let active = true;
@@ -25,15 +26,13 @@ export function ContentRecovery({
       try {
         const p = await session.request<Progress>("recovery");
         if (!active) return;
+        setDisconnected(false);
         setProgress(p);
         const key = JSON.stringify(p.counts);
         if (previous && previous !== key) await sync();
         previous = key;
       } catch {
-        if (active)
-          setMessage(
-            "Recovery progress is available when the feed service is running.",
-          );
+        if (active) setDisconnected(true);
       }
     };
     void update();
@@ -48,17 +47,20 @@ export function ContentRecovery({
     setMessage("");
     try {
       const saved = await library.states.filter((s) => s.saved).primaryKeys();
-      const articles = await library.articles.bulkGet(saved);
-      const ids = articles.flatMap((a) =>
-        a?.library === "subscriptions" ? [a.sourceKey] : [],
-      );
-      for (let i = 0; i < Math.max(1, ids.length); i += 100)
+      for (let i = 0; i < Math.max(1, saved.length); i += 100) {
+        const articles = await library.articles.bulkGet(
+          saved.slice(i, i + 100),
+        );
+        const ids = articles.flatMap((a) =>
+          a?.library === "subscriptions" ? [a.sourceKey] : [],
+        );
         setProgress(
           await session.request<Progress>("recovery", "POST", {
-            saved: ids.slice(i, i + 100),
+            saved: ids,
             start: i === 0,
           }),
         );
+      }
       await sync();
       setMessage(
         "Recovery requested. Keep the feed service running. You can close the reader.",
@@ -88,6 +90,11 @@ export function ContentRecovery({
           already retained · {c.partial ?? 0} partial ·{" "}
           {(c.access ?? 0) + (c.restricted ?? 0) + (c.unavailable ?? 0)}{" "}
           unavailable or restricted · {c.failed ?? 0} failed
+        </p>
+      )}
+      {disconnected && (
+        <p role="status">
+          Recovery progress is available when the feed service is running.
         </p>
       )}
       {message && <p role="status">{message}</p>}
