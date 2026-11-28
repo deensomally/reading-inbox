@@ -226,3 +226,26 @@ describe("outbound boundaries", () => {
     }
   });
 });
+
+it("observes a publisher crawl delay across feed and page requests and can resume after it", async () => {
+  const p = await publisher();
+  let now = Date.now();
+  const get = createDownloader(p.wire, () => now);
+  try {
+    p.routes.set("/robots.txt", {
+      body: "User-agent: ReadingBox\nCrawl-delay: 8\n",
+    });
+    p.routes.set("/feed", { body: rss("") });
+    await get(example);
+    const article = example.replace("/feed", "/article");
+    await expect(get(article, undefined, "page")).rejects.toMatchObject({
+      code: "crawl_delay",
+      retryAt: now + 8000,
+    });
+    expect(p.calls.filter((c) => c.url === "/article")).toHaveLength(0);
+    now += 8000;
+    expect((await get(article, undefined, "page")).status).toBe(404);
+  } finally {
+    await p.close();
+  }
+});

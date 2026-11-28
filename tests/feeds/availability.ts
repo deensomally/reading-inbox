@@ -42,12 +42,14 @@ async function classify(e: Entry, extract: typeof extractPage, get: Download) {
       ? "restriction"
       : "eligible";
   let ai = c.permissions.externalAI === true;
+  let diagnostic: string | undefined;
   if (c.pageCandidate && access === "eligible") {
     const result = await extract(
       { ...e, ...c, pageCandidate: c.pageCandidate },
       get,
     );
     const page = result.edition;
+    diagnostic = result.issue?.message ?? page?.reason;
     if (page?.document) {
       body =
         page.coverage === "complete"
@@ -63,7 +65,18 @@ async function classify(e: Entry, extract: typeof extractPage, get: Download) {
     else if (page?.outcome === "restriction") access = "restriction";
     else if (page?.outcome === "unavailable") access = "unavailable";
   }
-  return { body, access, ai };
+  return { body, access, ai, diagnostic };
+}
+function report(label: string, data: Record<string, unknown>) {
+  const json = JSON.stringify({ label, ...data });
+  console.log("AVAILABILITY", json);
+  if (process.env.GITHUB_ACTIONS) {
+    const safe = json
+      .replaceAll("%", "%25")
+      .replaceAll("\r", "%0D")
+      .replaceAll("\n", "%0A");
+    console.log("::notice title=Public feed comparison::" + safe);
+  }
 }
 const root = resolve("playwright-report");
 await mkdir(root, { recursive: true });
@@ -114,6 +127,7 @@ try {
         eligible: 0,
         ai: 0,
         pageAttempts: 0,
+        reasons: {} as Record<string, number>,
       });
       const results = [counts(), counts()];
       for (let i = 0; i < n; i++) {
@@ -150,26 +164,20 @@ try {
           if (row.content.pageCandidate && row.content.coverage !== "complete")
             c.pageAttempts++;
           if (r.ai) c.ai++;
+          if (r.diagnostic && r.body !== "page")
+            c.reasons[r.diagnostic] = (c.reasons[r.diagnostic] ?? 0) + 1;
         }
       }
-      console.log(
-        "AVAILABILITY",
-        JSON.stringify({
-          label,
-          discovered: after.entries.length,
-          sampled: n,
-          before: results[0],
-          after: results[1],
-        }),
-      );
+      report(label, {
+        discovered: after.entries.length,
+        sampled: n,
+        before: results[0],
+        after: results[1],
+      });
     } catch (e) {
-      console.log(
-        "AVAILABILITY",
-        JSON.stringify({
-          label,
-          feedFailure: e instanceof Error ? e.message : "unreachable",
-        }),
-      );
+      report(label, {
+        feedFailure: e instanceof Error ? e.message : "unreachable",
+      });
     }
   }
 } finally {

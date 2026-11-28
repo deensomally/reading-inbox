@@ -15,6 +15,7 @@ import { feedStructure } from "./structure.ts";
 import {
   openLicense,
   privateUses,
+  restrictedUses,
   storageBan,
   copyBan,
   aiBan,
@@ -553,6 +554,18 @@ export function parseFeed(
         directives + " " + content.paragraphs.join(" "),
       );
     }
+    // Creative Commons syndicates the WordPress entry body without the lead
+    // figure and its attribution. Keep its text while checking the public edition.
+    if (
+      new URL(feedUrl).hostname === "creativecommons.org" &&
+      content.coverage === "complete" &&
+      full?.ns === CONTENT &&
+      /appeared first on/i.test(value(full))
+    ) {
+      content.coverage = "unverified";
+      content.reason =
+        "The syndicated text omits the publisher’s header. Checking the page for figures and credits.";
+    }
     const candidate =
       storeText &&
       content.coverage !== "complete" &&
@@ -581,11 +594,7 @@ export function parseFeed(
     }
     if (storageBan.test(directives))
       content.pagePolicy = "The publisher explicitly prohibits storage.";
-    if (copyBan.test(directives) || aiBan.test(directives))
-      content.useLimits = {
-        copy: copyBan.test(directives),
-        externalAI: aiBan.test(directives),
-      };
+    content.useLimits = restrictedUses(directives);
     if (feedTerms || siteTerms)
       content.pagePolicy = "The recorded publisher terms restrict retrieval.";
     if (platformRestricted)
@@ -637,6 +646,7 @@ export function parseFeed(
     .filter(Boolean);
   return {
     title: publication,
+    useLimits: restrictedUses([...feedRights, headerDirectives].join(" ")),
     pagePolicy: platformRestricted ? "Substack feed only" : undefined,
     pageRestriction: inheritedLicense === "prohibited",
     license: inheritedLicense === "prohibited" ? null : inheritedLicense,

@@ -99,6 +99,7 @@ async function retrieve(
       err.code.startsWith("http_") &&
       temporaryStatus(Number(err.code.slice(5)));
     if (
+      err.code !== "crawl_delay" &&
       err.code !== "timeout" &&
       err.code !== "unreachable" &&
       !publisherStatus
@@ -122,7 +123,7 @@ const noArchive =
 const partial =
   "The publisher page could not be verified as a complete edition.";
 const junk =
-  /(?:^|[\s_-])(?:advertisement|sidebar|cookie(?:-banner|-notice)?|newsletter-signup|related-posts|recommendations|social-share|post-footer|post-meta|share-buttons|comments-area|tracking-pixel)(?:$|[\s_-])/i;
+  /(?:^|[\s_-])(?:advertisement|sidebar|cookie(?:-banner|-notice)?|mobile-date|newsletter-signup|related-posts|recommendations|social-share|post-footer|post-meta|share-buttons|comments-area|tracking-pixel)(?:$|[\s_-])/i;
 function clean(node: HtmlNode) {
   if (!("childNodes" in node)) return;
   node.childNodes = node.childNodes.filter(
@@ -238,6 +239,17 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
       .replace(/[^\p{L}\p{N}]+/gu, " ")
       .trim();
   const title = normalTitle(input.title);
+  // The weblog uses different editorial prefixes in its Atom and HTML titles.
+  // Only use this adapter for a matching canonical permalink and a single entry.
+  const weblogEntry =
+    new URL(url).hostname === "simonwillison.net" && canonicalUrl === url
+      ? single(
+          all.filter((e) => hasClass(e, "entry") && hasClass(e, "entryPage")),
+        )
+      : undefined;
+  const weblogTitles = weblogEntry
+    ? ["release " + title, title.replace(/^quoting /, "a quote from ")]
+    : [];
   const matches = [
     meta("og:title"),
     ...h1s.map(words),
@@ -245,6 +257,7 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
   ].some(
     (t) =>
       normalTitle(t) === title ||
+      weblogTitles.includes(normalTitle(t)) ||
       (title.length > 5 && normalTitle(t).startsWith(title + " ")),
   );
   if (!matches)
@@ -270,6 +283,7 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
       "restriction",
     );
   let source: HtmlNode[] | undefined;
+  const leadImages = new Set<string>();
   let verified = false;
   let confident = false;
   if (kind === "debian") {
@@ -301,12 +315,22 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
         (n) => element(n) && hasClass(n, "pub-date"),
       ) ?? -1;
     if (body && end >= 0) {
-      source = [
-        ...(header?.childNodes.filter(
+      const figures =
+        header?.childNodes.filter(
           (n) => element(n) && n.tagName === "figure",
-        ) ?? []),
-        ...body.childNodes.slice(0, end),
-      ];
+        ) ?? [];
+      const bodyImages = new Set(
+        elements(body)
+          .filter((e) => e.tagName === "img")
+          .map((e) => safeLink(attr(e, "src"), url)),
+      );
+      for (const image of figures
+        .flatMap(elements)
+        .filter((e) => e.tagName === "img" && attr(e, "alt").trim())) {
+        const href = safeLink(attr(image, "src"), url);
+        if (href && !bodyImages.has(href)) leadImages.add(href);
+      }
+      source = [...figures, ...body.childNodes.slice(0, end)];
       confident = true;
     }
     if (
@@ -317,6 +341,23 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
       )
     )
       license ??= ccBy;
+  }
+  if (!source && weblogEntry) {
+    const footer = weblogEntry.childNodes.findIndex(
+      (n) => element(n) && hasClass(n, "entryFooter"),
+    );
+    const body =
+      footer >= 0 &&
+      single(
+        weblogEntry.childNodes
+          .slice(0, footer)
+          .filter(element)
+          .filter((e) => e.tagName === "div"),
+      );
+    if (body) {
+      source = body.childNodes;
+      confident = true;
+    }
   }
   const boundary = single(
     all.filter(
@@ -358,7 +399,7 @@ function bounds(root: DefaultTreeAdapterMap["document"], input: PageInput) {
       !!last && tail.endsWith(normal(words(last))) && tail.length >= 120;
   }
   for (const n of source) clean(n);
-  return { source, license, directives, verified, confident, all };
+  return { source, license, directives, verified, confident, all, leadImages };
 }
 function images(nodes: OriginalNode[]): Exclude<OriginalNode, string>[] {
   return nodes.flatMap((n) =>
@@ -376,6 +417,9 @@ function imageLicense(img: Element, url: string, license: string) {
     elements(parent).some((e) => e.tagName === "figcaption" && normal(words(e)))
   );
 }
+const leadImageNote =
+  "The publisher’s lead illustration is linked with its description. The article text is retained.";
+
 async function includeImages(
   doc: OriginalDocument,
   source: HtmlNode[],
@@ -383,6 +427,7 @@ async function includeImages(
   license: string | null,
   download: Download,
   now: () => number,
+  leadImages: ReadonlySet<string>,
   retained?: OriginalDocument,
 ) {
   const licensed = new Set(
@@ -437,7 +482,9 @@ async function includeImages(
       }
     }
     const note =
-      "A figure is available at the publisher. Its image could not be retained.";
+      href && leadImages.has(href)
+        ? leadImageNote
+        : "A figure is available at the publisher. Its image could not be retained.";
     if (!doc.limitations.includes(note)) doc.limitations.push(note);
   }
   return issue;
@@ -528,6 +575,7 @@ export async function extractPage(
       license,
       download,
       now,
+      result.leadImages,
       retained?.pageUrl === url && retained.license === license
         ? retained.document
         : undefined,
@@ -563,7 +611,7 @@ export async function extractPage(
         license,
         coverage: isPreview
           ? "excerpt"
-          : document.limitations.length
+          : document.limitations.some((note) => note !== leadImageNote)
             ? "unverified"
             : "complete",
         provenance: verified ? "verified-page" : "publisher-page",

@@ -18,6 +18,11 @@ export const copyBan =
   /\b(?:no[- ]copy(?:ing)?|do not (?:copy|reproduce)|(?:copying|reproduction) (?:is )?prohibited)\b/i;
 export const aiBan =
   /\b(?:noai|no-ai|noimageai|no (?:ai|machine learning)|do not (?:train|use for ai))\b/i;
+export function restrictedUses(directives: string) {
+  const copy = copyBan.test(directives);
+  const externalAI = aiBan.test(directives);
+  return copy || externalAI ? { copy, externalAI } : undefined;
+}
 export const previewEnding =
   /(?:\b(?:continue reading|read (?:the )?(?:full (?:article|post|story)|rest of (?:the|this) (?:article|post))|read more|this article continues)\s*(?:[.>»→…\s]|<[^>]+>)*$|(?:\[…\]|\[\.\.\.\]|…|\.\.\.)\s*(?:<[^>]+>\s*)*$)/i;
 export const paywallText =

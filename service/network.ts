@@ -200,7 +200,11 @@ export function createDownloader(
 ): Download {
   const robots = new Map<
     string,
-    { until: number; rules: ReturnType<typeof robotsParser> }
+    {
+      until: number;
+      rules: ReturnType<typeof robotsParser>;
+      nextRequest: number;
+    }
   >();
   const cooldowns = new Map<string, FeedError>();
   async function checkRobots(
@@ -222,15 +226,30 @@ export function createDownloader(
         path,
         new TextDecoder().decode(response.bytes),
       );
-      cached = { until: now() + 3600000, rules };
+      cached = {
+        until: now() + 3600000,
+        rules,
+        nextRequest: cached?.nextRequest ?? 0,
+      };
       if (robots.size >= 256) robots.delete(robots.keys().next().value!);
       robots.set(url.origin, cached);
     }
     if (cached.rules.isAllowed(url.href, agentName) === false)
       throw new FeedError(
         "robots_denied",
-        "The publisher’s robots policy disallows this feed.",
+        "The publisher’s robots policy disallows this resource.",
       );
+    const delay = cached.rules.getCrawlDelay(agentName);
+    if (delay && delay > 0) {
+      if (now() < cached.nextRequest)
+        throw new FeedError(
+          "crawl_delay",
+          "Waiting for the publisher’s crawl delay.",
+          429,
+          cached.nextRequest,
+        );
+      cached.nextRequest = now() + delay * 1000;
+    }
   }
   async function chain(
     start: string,

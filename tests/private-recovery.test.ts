@@ -175,3 +175,142 @@ it("extracts an ordinary blog with Readability and rejects an uncertain ending o
     await p.close();
   }
 });
+
+it("applies a new feed-wide copy and processing restriction to retained pages outside the feed window", async () => {
+  const remote = await publisher();
+  const db = new Catalog(":memory:");
+  let now = Date.now();
+  const worker = new Poller(db, { now: () => now, download: remote.download });
+  try {
+    const grant = "https://creativecommons.org/publicdomain/zero/1.0/";
+    remote.routes.set("/feed", { body: rss(item("old", "/old", "Dispatch")) });
+    remote.routes.set("/old", {
+      headers: { "content-type": "text/html" },
+      body:
+        '<title>Dispatch</title><link rel="license" href="' +
+        grant +
+        '"><article><h1>Dispatch</h1><div class="entry-content"><p>Opening passage.</p><p>Closing passage.</p></div></article>',
+    });
+    const sub = await worker.subscribe("owner", example);
+    const { id } = db.articles("owner", 10).items[0];
+    await worker.original("owner", id);
+    const prior = db.article("owner", id);
+    expect(prior.permissions).toMatchObject({
+      copy: true,
+      export: true,
+      externalAI: true,
+    });
+    remote.routes.set("/feed", {
+      body: rss("", "<copyright>Do not copy. NoAI.</copyright>"),
+      headers: { etag: '"narrowed"' },
+    });
+    now += 86400000;
+    expect((await worker.refresh("owner", sub.subscription.id)).status).toBe(
+      "updated",
+    );
+    const article = db.article("owner", id);
+    expect(article).toMatchObject({
+      paragraphs: prior.paragraphs,
+      document: prior.document,
+      permissions: {
+        display: true,
+        retain: true,
+        copy: false,
+        export: false,
+        externalAI: false,
+      },
+    });
+    expect(article.revision).not.toBe(prior.revision);
+    const journal = db.articles("owner", 10).items[0];
+    expect(journal.revision).toBe(article.revision);
+    await worker.original("owner", id);
+    expect(db.article("owner", id).permissions).toMatchObject({
+      copy: false,
+      export: false,
+      externalAI: false,
+    });
+  } finally {
+    await worker.stop();
+    db.close();
+    await remote.close();
+  }
+});
+
+it("recovers a permalink's labelled release without copying the weblog navigation", async () => {
+  const url = "https://simonwillison.net/2026/Nov/03/observatory/";
+  const html =
+    '<title>Release: Observatory 2</title><link rel="canonical" href="' +
+    url +
+    '"><div class="entry entryPage"><p class="mobile-date-eyebrow">Today</p><div class="beat"><p>The second release.</p><p>Its closing note.</p></div><div class="entryFooter">Related releases</div></div>';
+  const read = (title: string) =>
+    extractPage(
+      {
+        title,
+        author: null,
+        license: null,
+        pageCandidate: { kind: "licensed", url },
+      },
+      async () => ({
+        url,
+        status: 200,
+        aliases: [url],
+        headers: new Headers({ "content-type": "text/html" }),
+        bytes: Buffer.from(html),
+      }),
+    );
+  const { edition } = await read("Observatory 2");
+  expect(edition?.coverage).toBe("complete");
+  expect(originalText(edition!.document!.nodes)).toBe(
+    "The second release.\n\nIts closing note.",
+  );
+  expect((await read("Different release")).edition?.document).toBeUndefined();
+});
+it("retains Creative Commons feed text while checking for its unsyndicated header figure and credit", () => {
+  const xml = rss(
+    '<item><title>A dispatch</title><link>https://creativecommons.org/dispatch/</link><content:encoded><![CDATA[<p>First observation.</p><p>Last observation.</p><p>The post <a href="/">A dispatch</a> appeared first on Creative Commons.</p>]]></content:encoded></item>',
+  );
+  const entry = parseFeed(xml, "https://creativecommons.org/feed/").entries[0];
+  expect(entry.content).toMatchObject({
+    paragraphs: ["First observation.", "Last observation."],
+    coverage: "unverified",
+    pageCandidate: { kind: "cc-story" },
+    permissions: { display: true },
+  });
+});
+
+it("distinguishes a described lead illustration from a missing figure inside the article", async () => {
+  const url = "https://creativecommons.org/a-field-report/";
+  const image =
+    '<figure><img src="/photo.jpg" alt="Portrait of the author"><figcaption>Photo by the author.</figcaption></figure>';
+  const read = (header: string, inline: string) =>
+    extractPage(
+      {
+        title: "Field report",
+        author: null,
+        license: null,
+        pageCandidate: { kind: "cc-story", url },
+      },
+      async () => ({
+        url,
+        aliases: [url],
+        status: 200,
+        headers: new Headers({ "content-type": "text/html" }),
+        bytes: Buffer.from(
+          "<title>Field report</title><main><header>" +
+            header +
+            '</header><div class="content"><p>First passage.</p>' +
+            inline +
+            '<p>Final passage.</p><p class="pub-date">Today</p></div></main>',
+        ),
+      }),
+    );
+  const { edition } = await read(image, "");
+  expect(edition?.coverage).toBe("complete");
+  expect(edition?.document?.limitations).toContainEqual(
+    expect.stringMatching(/lead illustration is linked/),
+  );
+  expect(originalText(edition!.document!.nodes)).toContain(
+    "Photo by the author.",
+  );
+  expect((await read("", image)).edition?.coverage).toBe("unverified");
+});

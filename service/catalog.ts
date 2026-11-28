@@ -56,6 +56,7 @@ export interface Edition {
   url: string;
   aliases: string[];
   parsed: ParsedFeed | null;
+  useLimits?: ParsedFeed["useLimits"];
   etag: string | null;
   modified: string | null;
   freshness: number | null;
@@ -561,6 +562,75 @@ export class Catalog {
       f.id,
     );
   }
+  // A feed-wide use restriction also covers editions outside its current window.
+  // Keep their permitted reading bodies and deliver the narrowed grants atomically.
+  private restrictUses(
+    feed: string,
+    limits: NonNullable<ParsedFeed["useLimits"]>,
+  ) {
+    const rows = this.all<StoredArticle>(
+      `SELECT * FROM articles WHERE feed_id=? AND
+       ((? AND coalesce(json_extract(metadata,'$.useLimits.copy'),0)=0) OR
+        (? AND coalesce(json_extract(metadata,'$.useLimits.externalAI'),0)=0))`,
+      feed,
+      Number(limits.copy),
+      Number(limits.externalAI),
+    );
+    const narrow = (json: string) => {
+      const m = JSON.parse(json);
+      m.useLimits = {
+        copy: !!m.useLimits?.copy || limits.copy,
+        externalAI: !!m.useLimits?.externalAI || limits.externalAI,
+      };
+      if (m.useLimits.copy) {
+        m.permissions.copy = false;
+        m.permissions.export = false;
+      }
+      if (m.useLimits.externalAI) m.permissions.externalAI = false;
+      m.revision = digest(JSON.stringify([m.revision, m.useLimits]));
+      return m;
+    };
+    for (const row of rows) {
+      const page = this.one<{
+        metadata: string;
+        body: string | null;
+        checked: number;
+      }>(
+        "SELECT metadata,body,checked FROM page_editions WHERE article_id=?",
+        row.id,
+      );
+      const base = narrow(row.metadata);
+      let json = JSON.stringify(base);
+      this.run(
+        "UPDATE articles SET metadata=?,revision=? WHERE id=?",
+        json,
+        base.revision,
+        row.id,
+      );
+      if (page) {
+        json = JSON.stringify(narrow(page.metadata));
+        this.run(
+          "INSERT INTO page_editions VALUES(?,?,?,?)",
+          row.id,
+          json,
+          page.body,
+          page.checked,
+        );
+      }
+      this.run(
+        "UPDATE recovery SET revision=? WHERE article_id=?",
+        base.revision,
+        row.id,
+      );
+      this.run(
+        "INSERT INTO changes(feed_id,article_id,sort_at,kind,metadata) VALUES(?,?,?,'upsert',?)",
+        feed,
+        row.id,
+        Date.parse(base.published ?? base.received),
+        json,
+      );
+    }
+  }
   private restrictContent(
     row: StoredArticle,
     feedId: string,
@@ -1016,7 +1086,11 @@ export class Catalog {
     );
     return row && this.get(owner, row.id);
   }
-  recordFeedUse(feed: string, edition: Edition) {
+  recordInactiveFeedUse(feed: string, edition: Edition) {
+    this.transaction(() => this.recordFeedUse(feed, edition));
+  }
+  private recordFeedUse(feed: string, edition: Edition) {
+    if (edition.useLimits) this.restrictUses(feed, edition.useLimits);
     if (edition.parsed || edition.noStore)
       this.run(
         "INSERT OR REPLACE INTO feed_use VALUES(?,?,?)",

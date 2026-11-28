@@ -1,3 +1,4 @@
+import { restrictedUses } from "./private-policy.ts";
 import type { Outline } from "../shared/opml.ts";
 import { Catalog, describeFeed, type Edition, type Feed } from "./catalog.ts";
 import { createDownloader, subscriptionUrl } from "./network.ts";
@@ -127,6 +128,9 @@ export class Poller {
       aliases,
       parsed,
       noStore,
+      useLimits:
+        parsed?.useLimits ??
+        restrictedUses(response.headers.get("x-robots-tag") ?? ""),
       freshness: freshness(response.headers, this.now()),
       etag: noStore
         ? null
@@ -309,7 +313,7 @@ export class Poller {
           const edition = await this.queue("history-policy:" + legacy.id, () =>
             this.edition(legacy.url),
           );
-          this.catalog.recordFeedUse(legacy.id, edition);
+          this.catalog.recordInactiveFeedUse(legacy.id, edition);
         }
       }
       const base = this.catalog.prepareRecovery(job.owner, job.id, this.terms);
