@@ -14,6 +14,7 @@ const editions = {
   phase1: phaseOne,
   milestone3: milestoneThree,
   milestone5: milestoneFive,
+  milestone7: "16d3007d9db59af0a73e78897a640aa56cd3f06a",
   milestone6: "829ad89c0ade5d6ede4ecda7983b310b8f0486c8",
 };
 async function readerEditions(previous: keyof typeof editions) {
@@ -32,7 +33,10 @@ async function readerEditions(previous: keyof typeof editions) {
       "archive",
       editions[previous],
       ...(previous !== "phase1" ? ["shared"] : []),
-      ...(previous === "milestone6" ? ["api"] : []),
+      ...(previous === "milestone6" || previous === "milestone7"
+        ? ["api"]
+        : []),
+      ...(previous === "milestone7" ? ["service"] : []),
       "src",
       "public",
       "package.json",
@@ -41,7 +45,7 @@ async function readerEditions(previous: keyof typeof editions) {
     ]);
     execFileSync("tar", ["-xf", "-", "-C", legacy], { input: archive });
     // Released multi-page configurations resolve HTML entry points from cwd.
-    if (previous === "milestone6")
+    if (previous === "milestone6" || previous === "milestone7")
       execFileSync(
         process.execPath,
         [
@@ -56,6 +60,7 @@ async function readerEditions(previous: keyof typeof editions) {
     await publish("previous");
     return {
       site,
+      legacy,
       publish,
       close: () => rm(workspace, { recursive: true, force: true }),
     };
@@ -99,14 +104,22 @@ export async function upgradePreview() {
 }
 
 export async function subscriptionUpgradePreview(
-  previous: "milestone3" | "milestone5" | "milestone6" = "milestone3",
+  previous:
+    "milestone3" | "milestone5" | "milestone6" | "milestone7" = "milestone3",
 ) {
   const files = await readerEditions(previous);
   try {
-    const service = await ownerPreview(false, files.site);
+    const service = await ownerPreview(
+      false,
+      files.site,
+      previous === "milestone7" ? files.legacy : undefined,
+    );
     return {
       ...service,
-      publishCurrent: () => files.publish("current"),
+      publishCurrent: async () => {
+        await files.publish("current");
+        if (previous === "milestone7") await service.upgradeService();
+      },
       publishPrevious: () => files.publish("previous"),
       async close() {
         await service.close();

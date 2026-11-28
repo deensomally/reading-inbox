@@ -23,6 +23,7 @@ export interface BackupEntry {
   coverage: Article["coverage"];
   revision: string;
   license?: string;
+  attribution?: { source: string; notice?: string };
   state: PortableState;
   positions: { stage: Stage; top: number; changedAt?: number }[];
   body?: string;
@@ -129,6 +130,8 @@ function readEntry(x: unknown, kind: LibraryKind): BackupEntry {
   });
   unique(positions.map((p) => p.stage));
   unique(summaries.map((s) => s.stage));
+  const credit =
+    e.attribution === undefined ? undefined : record(e.attribution);
   return {
     id,
     portableId,
@@ -142,6 +145,9 @@ function readEntry(x: unknown, kind: LibraryKind): BackupEntry {
     coverage: e.coverage,
     revision,
     license: optional(e.license),
+    attribution: credit
+      ? { source: string(credit.source), notice: optional(credit.notice) }
+      : undefined,
     state: {
       saved: flag(s.saved),
       archived: flag(s.archived),

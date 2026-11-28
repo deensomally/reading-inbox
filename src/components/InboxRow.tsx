@@ -45,8 +45,16 @@ export const InboxRow = memo(function InboxRow({
           {showLength && (
             <span>
               {a.wordCount === undefined
-                ? "Length unknown"
-                : "Verified · " +
+                ? a.availableWords
+                  ? "Length unknown · " +
+                    a.availableWords.toLocaleString() +
+                    " available words"
+                  : "Length unknown"
+                : (a.fullSource === "publisher-feed"
+                    ? "Publisher full text · "
+                    : a.fullSource === "publisher-page"
+                      ? "Extracted full text · "
+                      : "Verified · ") +
                   a.wordCount.toLocaleString() +
                   (a.wordCount === 1 ? " word" : " words")}
             </span>

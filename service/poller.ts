@@ -1,3 +1,4 @@
+import { restrictedUses, responseDirectives } from "./private-policy.ts";
 import type { Outline } from "../shared/opml.ts";
 import { Catalog, describeFeed, type Edition, type Feed } from "./catalog.ts";
 import { createDownloader, subscriptionUrl } from "./network.ts";
@@ -12,7 +13,7 @@ import { FeedError, publisherError, type Download } from "./types.ts";
 
 function storageRestricted(headers: Headers) {
   return (
-    /\b(?:no-store|private)\b/i.test(headers.get("cache-control") ?? "") ||
+    /\bno-store\b/i.test(headers.get("cache-control") ?? "") ||
     /\b(?:noarchive|nosnippet|none)\b/i.test(headers.get("x-robots-tag") ?? "")
   );
 }
@@ -34,7 +35,7 @@ export interface PollOptions {
   now?: () => number;
   jitter?: () => number;
   proofs?: Proofs;
-  pageOrigins?: ReadonlySet<string>;
+  terms?: ReadonlyMap<string, "feed-only" | "no-retention">;
 }
 import { extractPage } from "./original-page.ts";
 export class Poller {
@@ -43,7 +44,7 @@ export class Poller {
   private now: () => number;
   private jitter: () => number;
   private proofs: Proofs;
-  private pageOrigins: ReadonlySet<string>;
+  private terms: ReadonlyMap<string, "feed-only" | "no-retention">;
   private pending = new Map<string, Promise<unknown>>();
   private tail = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
@@ -51,9 +52,11 @@ export class Poller {
   constructor(catalog: Catalog, options: PollOptions = {}) {
     this.catalog = catalog;
     this.now = options.now ?? Date.now;
-    this.download = options.download ?? createDownloader(undefined, this.now);
+    this.terms = options.terms ?? new Map();
+    this.download =
+      options.download ??
+      createDownloader(undefined, this.now, 15000, this.terms);
     this.jitter = options.jitter ?? (() => Math.floor(Math.random() * 90000));
-    this.pageOrigins = options.pageOrigins ?? new Set();
     this.proofs = options.proofs ?? new Map();
   }
   // A personal installation needs one publisher request at a time. Manual, scheduled and
@@ -103,9 +106,12 @@ export class Poller {
         aliases = [...aliases, ...response.aliases];
       }
       parsed = parseFeed(input, response.url, {
-        storeText: !storageRestricted(response.headers),
+        storeText:
+          !storageRestricted(response.headers) &&
+          this.terms.get(new URL(response.url).origin) !== "no-retention",
+        terms: this.terms,
+        headerDirectives: responseDirectives(response.headers),
         proofs: this.proofs,
-        pageOrigins: this.pageOrigins,
       });
     } else if (
       response.status !== 304 ||
@@ -114,12 +120,17 @@ export class Poller {
     ) {
       throw publisherError(response.status, response.headers, this.now());
     }
-    const noStore = storageRestricted(response.headers);
+    const noStore =
+      storageRestricted(response.headers) ||
+      this.terms.get(new URL(response.url).origin) === "no-retention";
     return {
       url: response.url,
       aliases,
       parsed,
       noStore,
+      useLimits:
+        parsed?.useLimits ??
+        restrictedUses(responseDirectives(response.headers)),
       freshness: freshness(response.headers, this.now()),
       etag: noStore
         ? null
@@ -245,6 +256,7 @@ export class Poller {
       if (
         input.pageCandidate &&
         !input.withdrawn &&
+        !this.catalog.pageGone(id) &&
         (input.checked === null || this.now() - input.checked >= 60000)
       ) {
         const feed = this.catalog.get(owner, input.feedId);
@@ -270,12 +282,94 @@ export class Poller {
       }
     });
   }
+  async recoverOne() {
+    const job = this.catalog.claimRecovery(this.now());
+    if (!job) return false;
+    const done = (status: string, detail: string, due = 0) =>
+      this.catalog.finishRecovery(job.id, job.lease, status, detail, due);
+    try {
+      const legacy = this.catalog.legacyPolicyFeed(job.owner, job.id);
+      if (legacy) {
+        if (legacy.not_before > this.now()) {
+          done(
+            "queued",
+            "Waiting for the publisher’s next permitted feed check.",
+            legacy.not_before,
+          );
+          return true;
+        }
+        if (legacy.active) {
+          const refresh = await this.refresh(job.owner, legacy.id);
+          if (refresh.status === "failed")
+            throw new Error(
+              refresh.subscription.error ??
+                "Feed policy could not be refreshed.",
+            );
+          if (this.catalog.legacyPolicyFeed(job.owner, job.id)) {
+            done("retry", "Waiting for feed policy.", this.now() + 60000);
+            return true;
+          }
+        } else {
+          // Explicit history recovery can check an inactive feed once without resubscribing.
+          const edition = await this.queue("history-policy:" + legacy.id, () =>
+            this.edition(legacy.url),
+          );
+          this.catalog.recordInactiveFeedUse(legacy, edition, this.now());
+        }
+      }
+      const base = this.catalog.prepareRecovery(job.owner, job.id, this.terms);
+      if (!base.pageCandidate || base.withdrawn || base.subscriberOnly) {
+        done(
+          base.subscriberOnly
+            ? "access"
+            : base.withdrawn ||
+                base.pagePolicy ||
+                /no storage|permission/.test(base.reason)
+              ? "restricted"
+              : "unavailable",
+          base.pagePolicy ?? base.reason,
+        );
+        return true;
+      }
+      const issue = await this.original(job.owner, job.id);
+      if (issue) {
+        done(
+          job.attempts >= 3 ? "failed" : "retry",
+          issue.message,
+          Math.max(issue.retryAt ?? 0, this.now() + 60000 * 2 ** job.attempts),
+        );
+      } else {
+        const a = this.catalog.article(job.owner, job.id);
+        const status =
+          a.subscriberOnly || a.outcome === "access"
+            ? "access"
+            : a.coverage === "complete" && a.permissions.display
+              ? "recovered"
+              : a.outcome === "restriction"
+                ? "restricted"
+                : a.outcome === "technical"
+                  ? "failed"
+                  : a.permissions.display
+                    ? "partial"
+                    : "unavailable";
+        done(status, a.reason);
+      }
+    } catch (e) {
+      done(
+        job.attempts >= 3 ? "failed" : "retry",
+        e instanceof Error ? e.message : "Recovery interrupted",
+        this.now() + 60000 * 2 ** job.attempts,
+      );
+    }
+    return true;
+  }
   async tick() {
     if (this.ticking) return;
     this.ticking = true;
     try {
       const due = this.catalog.nextDue(this.now());
       if (due) await this.refresh(due.owner, due.id, false);
+      else await this.recoverOne();
     } finally {
       this.ticking = false;
     }

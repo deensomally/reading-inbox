@@ -189,13 +189,13 @@ test("separates excerpt, unverified and publisher-only editions and keeps the pa
     await addFeed(page, "fieldnotes.substack.com", "One Useful Thing");
     await page.getByRole("link", { name: /Read original of Fable/ }).click();
     await expect(
-      page.getByRole("heading", { name: "Publisher only" }),
+      page.getByRole("heading", { name: "Publisher excerpt" }),
     ).toBeVisible();
     await expect(
       page.getByRole("link", { name: "Open on publisher site" }),
     ).toHaveAttribute("href", /^https:\/\/www.oneusefulthing.org\/p\//);
     await expect(
-      page.getByRole("button", { name: /Copy (full|excerpt|available)/ }),
+      page.getByRole("button", { name: "Copy full article text" }),
     ).toHaveCount(0);
   } finally {
     await site.close();

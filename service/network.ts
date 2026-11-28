@@ -5,6 +5,7 @@ import { get as httpsGet } from "node:https";
 import { isIP } from "node:net";
 import { brotliDecompressSync, gunzipSync, inflateSync } from "node:zlib";
 import ipaddr from "ipaddr.js";
+import { substackHost } from "./private-policy.ts";
 import robotsParser from "robots-parser";
 import {
   FeedError,
@@ -151,6 +152,7 @@ export async function readResponse(response: IncomingMessage, limit: number) {
       "age",
       "content-type",
       "x-robots-tag",
+      "tdm-reservation",
       "retry-after",
     ]) {
       const value = response.headers[name];
@@ -195,10 +197,15 @@ export function createDownloader(
   wire: Wire = requestPublic,
   now = Date.now,
   deadlineMs = 15000,
+  terms: ReadonlyMap<string, string> = new Map(),
 ): Download {
   const robots = new Map<
     string,
-    { until: number; rules: ReturnType<typeof robotsParser> }
+    {
+      until: number;
+      rules: ReturnType<typeof robotsParser>;
+      nextRequest: number;
+    }
   >();
   const cooldowns = new Map<string, FeedError>();
   async function checkRobots(
@@ -220,15 +227,30 @@ export function createDownloader(
         path,
         new TextDecoder().decode(response.bytes),
       );
-      cached = { until: now() + 3600000, rules };
+      cached = {
+        until: now() + 3600000,
+        rules,
+        nextRequest: cached?.nextRequest ?? 0,
+      };
       if (robots.size >= 256) robots.delete(robots.keys().next().value!);
       robots.set(url.origin, cached);
     }
     if (cached.rules.isAllowed(url.href, agentName) === false)
       throw new FeedError(
         "robots_denied",
-        "The publisher’s robots policy disallows this feed.",
+        "The publisher’s robots policy disallows this resource.",
       );
+    const delay = cached.rules.getCrawlDelay(agentName);
+    if (delay && delay > 0) {
+      if (now() < cached.nextRequest)
+        throw new FeedError(
+          "crawl_delay",
+          "Waiting for the publisher’s crawl delay.",
+          429,
+          cached.nextRequest,
+        );
+      cached.nextRequest = now() + delay * 1000;
+    }
   }
   async function chain(
     start: string,
@@ -242,6 +264,11 @@ export function createDownloader(
     let permanent = true;
     for (let hop = 0; hop <= 5; hop++) {
       signal.throwIfAborted();
+      if (purpose && !readingRobots && terms.has(url.origin))
+        throw new FeedError(
+          "terms_denied",
+          "Publisher terms prohibit automated retrieval of this page.",
+        );
       const throttled = cooldowns.get(url.origin);
       if (throttled?.retryAt && throttled.retryAt > now()) throw throttled;
       cooldowns.delete(url.origin);
@@ -283,7 +310,7 @@ export function createDownloader(
       }
       if (![301, 302, 303, 307, 308].includes(result.status))
         return { ...result, url: url.href, aliases };
-      if (purpose && !readingRobots)
+      if (purpose === "image" && !readingRobots)
         throw new FeedError(
           "page_redirect",
           "The publisher redirected the reviewed resource. Open it at the publisher.",
@@ -291,7 +318,12 @@ export function createDownloader(
       const location = result.headers.get("location");
       if (!location) break;
       const next = publicUrl(location, url.href);
-      if (purpose && next.origin !== url.origin) throw badUrl();
+      if (purpose === "image" && next.origin !== url.origin) throw badUrl();
+      if (purpose === "page" && substackHost(next.href))
+        throw new FeedError(
+          "terms_denied",
+          "Substack limits automated page retrieval.",
+        );
       if (url.protocol === "https:" && next.protocol === "http:")
         throw badUrl();
       next.hash = "";

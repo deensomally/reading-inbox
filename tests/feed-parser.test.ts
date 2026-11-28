@@ -34,7 +34,11 @@ describe("public publisher formats", () => {
       published: "2026-11-18T16:25:42.000Z",
     });
     expect(e.url).toContain("?utm_source=rss&utm_medium=rss");
-    expect(e.content).toMatchObject({ coverage: "unverified", paragraphs: [] });
+    expect(e.content).toMatchObject({
+      coverage: "unverified",
+      paragraphs: ["Authored test text in a syndication field."],
+      permissions: { display: true, export: false },
+    });
   });
   it("retains only basic, permitted USGS Atom summary text and identifies a Substack preview", () => {
     const [quake] = parseFeed(fixture("usgs.atom"), usgs).entries;
@@ -54,8 +58,8 @@ describe("public publisher formats", () => {
       discussion: null,
       content: {
         coverage: "excerpt",
-        paragraphs: [],
-        permissions: { display: false, copy: false },
+        paragraphs: ["Authored preview for the test.", "Continue reading"],
+        permissions: { display: true, copy: true, export: false },
       },
     });
     expect(
@@ -85,7 +89,10 @@ describe("public publisher formats", () => {
     expect(body(xml.replace("final", "changed")).coverage).toBe("unverified");
     expect(
       body(
-        xml.replace("<a:content>", "<a:rights>Reserved</a:rights><a:content>"),
+        xml.replace(
+          "<a:content>",
+          "<a:rights>Do not store</a:rights><a:content>",
+        ),
       ).paragraphs,
     ).toEqual([]);
     expect(
@@ -218,4 +225,27 @@ describe("outbound boundaries", () => {
       await p.close();
     }
   });
+});
+
+it("observes a publisher crawl delay across feed and page requests and can resume after it", async () => {
+  const p = await publisher();
+  let now = Date.now();
+  const get = createDownloader(p.wire, () => now);
+  try {
+    p.routes.set("/robots.txt", {
+      body: "User-agent: ReadingBox\nCrawl-delay: 8\n",
+    });
+    p.routes.set("/feed", { body: rss("") });
+    await get(example);
+    const article = example.replace("/feed", "/article");
+    await expect(get(article, undefined, "page")).rejects.toMatchObject({
+      code: "crawl_delay",
+      retryAt: now + 8000,
+    });
+    expect(p.calls.filter((c) => c.url === "/article")).toHaveLength(0);
+    now += 8000;
+    expect((await get(article, undefined, "page")).status).toBe(404);
+  } finally {
+    await p.close();
+  }
 });

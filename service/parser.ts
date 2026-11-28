@@ -12,6 +12,17 @@ import {
 
 import { originalText } from "../shared/original.ts";
 import { feedStructure } from "./structure.ts";
+import {
+  openLicense,
+  privateUses,
+  restrictedUses,
+  storageBan,
+  copyBan,
+  aiBan,
+  previewEnding,
+  paywallText,
+  substackHost,
+} from "./private-policy.ts";
 import { pageCandidate } from "./page-policy.ts";
 const ATOM = "http://www.w3.org/2005/Atom";
 const DC = "http://purl.org/dc/elements/1.1/";
@@ -212,8 +223,8 @@ export function discoverAlternate(html: string, page: string) {
   throw invalid();
 }
 
-function licenseOf(node: Xml): string | null {
-  const values = [
+function rightsOf(node: Xml) {
+  return [
     ...children(node, "rights", DC).map(value),
     ...children(node, "rights", ATOM).map(value),
     ...children(node, "copyright").map(value),
@@ -222,15 +233,16 @@ function licenseOf(node: Xml): string | null {
       .map((n) => link(n.attrs.href, n.base) ?? "unreviewed"),
     ...CC.flatMap((ns) => children(node, "license", ns).map(value)),
   ].filter(Boolean);
-  if (!values.length) return null;
-  const normalized = values.map((v) =>
-    /^https?:\/\/creativecommons\.org\/(?:licenses\/by\/4\.0|publicdomain\/zero\/1\.0)\/?$/i.test(
-      v,
-    )
-      ? v.replace(/^http:/i, "https:").replace(/\/?$/, "/")
-      : "unreviewed",
-  );
-  return new Set(normalized).size === 1 ? normalized[0] : "unreviewed";
+}
+function licenseOf(values: string[]) {
+  if (values.some((v) => storageBan.test(v))) return "prohibited";
+  const grants = [...new Set(values.map(openLicense).filter(Boolean))];
+  if (
+    grants.length === 1 &&
+    !values.some((v) => /rights reserved|not covered/i.test(v))
+  )
+    return grants[0];
+  return null;
 }
 
 export type Proofs = ReadonlyMap<string, string>; // Feed and article URL pair -> reviewed plain-text SHA-256.
@@ -281,6 +293,7 @@ function contentOf(
   permittedStorage: boolean,
   proof: string | undefined,
   base: string,
+  directives: string,
 ): FeedContent {
   if (full && summary && (!readableFormat(full) || !value(full)))
     full = undefined;
@@ -290,10 +303,23 @@ function contentOf(
     ? xhtml.children.map(serializeXhtml).join("")
     : value(supplied);
   if (xhtml) base = xhtml.base;
-  const subscriberOnly =
-    /(?:only (?:available )?to (?:paid )?subscribers|for (?:paid|paying) subscribers|subscriber[- ]only|subscribe to (?:read|continue|unlock)|"isAccessibleForFree"\s*:\s*"?false|class=["'][^"']*(?:paywall|subscription-wall))/i.test(
+  const embeddedStorageBan =
+    storageBan.test(raw) ||
+    /<meta\b(?=[^>]*name=["'](?:robots|readingbox)["'])[^>]*(?:noarchive|nosnippet)/i.test(
       raw,
     );
+  if (embeddedStorageBan)
+    return {
+      coverage: "missing",
+      license: null,
+      paragraphs: [],
+      reason: "The article explicitly prohibits storage.",
+      pagePolicy: "The publisher prohibits storage.",
+      permissions: privateUses(false, null),
+    };
+  const subscriberOnly =
+    paywallText.test(raw) ||
+    /itemprop=["']isAccessibleForFree["'][^>]*content=["']false/i.test(raw);
   if (subscriberOnly) {
     // Only a separately supplied public summary can survive a subscriber-only signal.
     const fallback =
@@ -305,6 +331,7 @@ function contentOf(
             permittedStorage,
             undefined,
             base,
+            directives,
           )
         : undefined;
     return {
@@ -333,23 +360,29 @@ function contentOf(
         supplied.children.every((n) => typeof n === "string") &&
         !/<[a-z!/][^>]*>/i.test(raw);
   const supported = !!supplied && readableFormat(supplied);
-  const licensed = !!license && license !== "unreviewed";
-  const retain = !!raw && supported && licensed && permittedStorage;
-  const text = retain ? (plain ? raw : htmlText(raw)) : "";
-  const blocks = paragraphs(text.slice(0, 65536));
+  const retain =
+    !!raw && supported && permittedStorage && license !== "prohibited";
+  const document = retain && !plain ? feedStructure(raw, base) : undefined;
+  const text = retain
+    ? plain
+      ? raw
+      : document
+        ? originalText(document.nodes)
+        : ""
+    : "";
+  const blocks = paragraphs(text.slice(0, 100000));
   const preview =
-    !full ||
-    /(?:read (?:the )?(?:full|more)|paid subscribers|continue reading|subscriber.only|subscribe to (?:read|continue))/i.test(
-      raw.slice(-1500),
-    );
+    !full || previewEnding.test(text.trim()) || previewEnding.test(raw.trim());
+  const independentlyVerified =
+    !!proof && digest(blocks.join("\n\n")) === proof;
   const complete =
     !!full &&
     !preview &&
     retain &&
-    plain &&
-    text.length <= 65536 &&
-    !!proof &&
-    digest(blocks.join("\n\n")) === proof;
+    text.length <= 100000 &&
+    (plain || !!document) &&
+    !document?.limitations.some((l) => !/Images|Embedded media/.test(l)) &&
+    (independentlyVerified || text.trim().length >= 120 || blocks.length >= 2);
   const coverage = !raw
     ? "missing"
     : preview
@@ -360,34 +393,24 @@ function contentOf(
   const display = blocks.length > 0;
   return {
     coverage,
-    ...(retain &&
-      !plain &&
-      text.length <= 65536 && { document: feedStructure(raw, base) }),
-
-    license: licensed ? license : null,
-    paragraphs: blocks,
-    reason: !raw
-      ? "The feed supplied no readable body."
-      : !permittedStorage
+    document,
+    provenance:
+      independentlyVerified && complete ? "verified-feed" : "publisher-feed",
+    license: license === "prohibited" ? null : license,
+    paragraphs: document ? paragraphs(originalText(document.nodes)) : blocks,
+    reason:
+      !permittedStorage || license === "prohibited"
         ? "The publisher requested no storage."
-        : !licensed
-          ? "Text reuse has no reviewed permission. Open the publisher link."
-          : text.length > 65536
-            ? "This edition exceeds the retained text limit. Continue on the publisher site."
-            : !supported
-              ? "This feed content format is unavailable in the basic reader."
-              : complete
-                ? "The licensed text matches the reviewed original."
-                : preview
-                  ? "Publisher-supplied preview."
-                  : "Completeness has not been verified.",
-    permissions: {
-      display,
-      retain: display,
-      copy: display,
-      export: false,
-      summarise: false,
-    },
+        : !raw
+          ? "The feed supplied no readable body."
+          : !supported
+            ? "The supplied format is unavailable."
+            : complete
+              ? "The publisher supplied this edition in its full-content field."
+              : preview
+                ? "Publisher-supplied preview."
+                : "The completeness of the supplied text is uncertain.",
+    permissions: privateUses(display, license, directives + " " + text),
   };
 }
 
@@ -397,7 +420,8 @@ export function parseFeed(
   {
     storeText = true,
     proofs = new Map<string, string>() as Proofs,
-    pageOrigins = new Set<string>() as ReadonlySet<string>,
+    headerDirectives = "",
+    terms = new Map() as ReadonlyMap<string, "feed-only" | "no-retention">,
   } = {},
 ): ParsedFeed {
   const root = xmlTree(input, feedUrl);
@@ -415,8 +439,17 @@ export function parseFeed(
     /^https:\/\/earthquake\.usgs\.gov\/earthquakes\/feed\/v1\.0\/summary\/significant_(hour|day|week|month)\.atom$/.test(
       feedUrl,
     );
+  const feedRights = rightsOf(channel);
+  const platformRestricted =
+    substackHost(feedUrl) ||
+    /substack/i.test(value(child(channel, "generator"))) ||
+    /substack(?:cdn)?\.com/i.test(
+      value(
+        child(child(channel, "image") ?? { ...channel, children: [] }, "url"),
+      ),
+    );
   const inheritedLicense =
-    licenseOf(channel) ??
+    licenseOf(feedRights) ??
     (usgs
       ? "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
       : null);
@@ -430,6 +463,8 @@ export function parseFeed(
         (guid && guid.attrs.isPermaLink !== "false"
           ? link(value(guid).match(/^https?:\/\/.+/i)?.[0], guid.base)
           : null));
+    const siteTerms = url ? terms.get(new URL(url).origin) : undefined;
+    const feedTerms = terms.get(new URL(feedUrl).origin);
     const full = atom ? child(n, "content") : child(n, "encoded", CONTENT);
     const summary = child(n, atom ? "summary" : "description");
     const author = atom
@@ -449,21 +484,36 @@ export function parseFeed(
     );
     const updated = date(value(child(n, "updated")));
     const comments = child(n, "comments");
-    const itemLicense = licenseOf(n),
-      license = itemLicense ?? inheritedLicense;
+    const entryRights = rightsOf(n);
+    const itemLicense = licenseOf(entryRights);
+    const license =
+      inheritedLicense === "prohibited"
+        ? inheritedLicense
+        : entryRights.length
+          ? itemLicense
+          : inheritedLicense;
+    const directives = [...feedRights, ...entryRights, headerDirectives].join(
+      " ",
+    );
+
     let content = contentOf(
       full,
       summary,
       license,
-      storeText,
+      storeText && siteTerms !== "no-retention" && feedTerms !== "no-retention",
       url ? proofs.get(reviewKey(feedUrl, url)) : undefined,
       (full ?? summary)?.attrs["xml:base"]
         ? (full ?? summary)!.base
         : (url ?? n.base),
+      directives,
     );
     const reviewed =
       storeText &&
+      siteTerms !== "no-retention" &&
+      feedTerms !== "no-retention" &&
       !license &&
+      !entryRights.length &&
+      !feedRights.length &&
       feedUrl === debianReview.feed &&
       url === debianReview.article &&
       title === debianReview.title &&
@@ -479,23 +529,52 @@ export function parseFeed(
       if (digest(parts.join("\n\n")) === debianReview.textHash)
         content = {
           coverage: "complete",
+          provenance: "verified-feed",
           license: debianReview.license,
           paragraphs: parts,
           reason:
             "All five paragraphs and both links match the reviewed publisher edition.",
-          permissions: {
-            display: true,
-            copy: true,
-            retain: true,
-            export: false,
-            summarise: false,
-          },
+          permissions: privateUses(true, debianReview.license, directives),
         };
+    }
+    if (
+      content.permissions.display &&
+      !content.license &&
+      !entryRights.length &&
+      !feedRights.length &&
+      new URL(feedUrl).hostname === "bits.debian.org" &&
+      !/reproduced with permission|all rights reserved/i.test(
+        content.paragraphs.join(" "),
+      )
+    ) {
+      content.license = debianReview.license;
+      content.permissions = privateUses(
+        true,
+        content.license,
+        directives + " " + content.paragraphs.join(" "),
+      );
+    }
+    // Creative Commons syndicates the WordPress entry body without the lead
+    // figure and its attribution. Keep its text while checking the public edition.
+    if (
+      new URL(feedUrl).hostname === "creativecommons.org" &&
+      content.coverage === "complete" &&
+      full?.ns === CONTENT &&
+      /appeared first on/i.test(value(full))
+    ) {
+      content.coverage = "unverified";
+      content.reason =
+        "The syndicated text omits the publisher’s header. Checking the page for figures and credits.";
     }
     const candidate =
       storeText &&
+      content.coverage !== "complete" &&
+      !content.pagePolicy &&
       !content.subscriberOnly &&
-      pageCandidate(feedUrl, url, license, pageOrigins);
+      !platformRestricted &&
+      !feedTerms &&
+      !siteTerms &&
+      pageCandidate(feedUrl, url, license);
     if (candidate) {
       if (candidate.kind === "debian" && full?.attrs.type === "html")
         candidate.feedDigest = digest(value(full).replace(/\s+/g, " ").trim());
@@ -513,9 +592,22 @@ export function parseFeed(
         );
       content.pageCandidate = candidate;
     }
+    if (storageBan.test(directives))
+      content.pagePolicy = "The publisher explicitly prohibits storage.";
+    content.useLimits = restrictedUses(directives);
+    if (feedTerms || siteTerms)
+      content.pagePolicy = "The recorded publisher terms restrict retrieval.";
+    if (platformRestricted)
+      content.pagePolicy =
+        "Substack permits RSS reading and prohibits automated page scraping.";
+    if (copyBan.test(directives)) {
+      content.permissions.copy = false;
+      content.permissions.export = false;
+    }
+    if (aiBan.test(directives)) content.permissions.externalAI = false;
     const permissionSource = reviewed
       ? "entry"
-      : license && license !== "unreviewed"
+      : license && license !== "prohibited"
         ? itemLicense
           ? "entry"
           : "feed"
@@ -554,8 +646,10 @@ export function parseFeed(
     .filter(Boolean);
   return {
     title: publication,
-    pageRestriction: inheritedLicense === "unreviewed",
-    license: inheritedLicense === "unreviewed" ? null : inheritedLicense,
+    useLimits: restrictedUses([...feedRights, headerDirectives].join(" ")),
+    pagePolicy: platformRestricted ? "Substack feed only" : undefined,
+    pageRestriction: inheritedLicense === "prohibited",
+    license: inheritedLicense === "prohibited" ? null : inheritedLicense,
     ttl: Number.isSafeInteger(ttl) && ttl > 0 ? ttl : 0,
     entries,
     withdrawals,

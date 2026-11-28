@@ -49,6 +49,8 @@ export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
   license?: string;
   reviewedDebian?: boolean;
   document?: import("../../shared/original").OriginalDocument;
+  provenance?:
+    "verified-feed" | "publisher-feed" | "verified-page" | "publisher-page";
   checkPage?: boolean;
   pageUrl?: string;
   pageCheckedAt?: number;
@@ -68,6 +70,7 @@ export interface Article extends Omit<Fixture, "delivery" | "coverage"> {
     summarise: boolean;
     export?: boolean;
     exportSummary?: boolean;
+    externalAI?: boolean;
   };
 }
 export type ArticleListItem = Pick<
@@ -78,6 +81,8 @@ export type ArticleListItem = Pick<
   newestFirst: number;
   topics: string[];
   wordCount?: number;
+  availableWords?: number;
+  fullSource?: Article["provenance"];
 };
 
 function articleDate({

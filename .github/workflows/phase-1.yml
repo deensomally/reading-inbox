@@ -53,7 +53,7 @@ jobs:
             $env:READER_BROWSER_EXECUTABLE = Join-Path $env:ProgramFiles $bravePath
           }
           (Get-Item -LiteralPath $env:READER_BROWSER_EXECUTABLE -ErrorAction Stop).VersionInfo.ProductVersion
-          npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint|Milestone 5 worker|Milestone 6 library"
+          npx.cmd playwright test --project=desktop --workers=1 --grep "Milestone 3 subscription checkpoint|Milestone 5 worker|Milestone 6 library|Milestone 7 library"
       - name: Sample live publishers with the local service
         if: matrix.channel == 'chrome' && contains(github.event.pull_request.body, '[public-feed-smoke]')
         continue-on-error: true # The deterministic publisher tests above are required on every PR.
@@ -106,3 +106,18 @@ jobs:
         with:
           name: android-owner-preview
           path: playwright-report/owner-preview
+
+  availability:
+    if: contains(github.event.pull_request.body, '[public-feed-smoke]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:availability

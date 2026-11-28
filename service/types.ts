@@ -16,6 +16,10 @@ export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
 export interface FeedContent {
+  provenance?:
+    "verified-feed" | "publisher-feed" | "publisher-page" | "verified-page";
+  pagePolicy?: string;
+  useLimits?: { copy: boolean; externalAI: boolean };
   document?: import("../shared/original.ts").OriginalDocument;
   pageCandidate?: import("./page-policy.ts").PageCandidate;
   subscriberOnly?: boolean;
@@ -23,12 +27,13 @@ export interface FeedContent {
   reason: string;
   paragraphs: string[];
   license: string | null;
-  // This service only retains basic publisher text with a known permission basis.
+  // Private retention and further uses are evaluated separately.
   permissions: {
     display: boolean;
     retain: boolean;
     copy: boolean;
     export: boolean;
+    externalAI?: boolean;
     summarise: false;
   };
 }
@@ -47,7 +52,9 @@ export interface Entry {
   content: FeedContent;
 }
 export interface ParsedFeed {
+  useLimits?: FeedContent["useLimits"];
   pageRestriction?: boolean;
+  pagePolicy?: string;
   title: string;
   license: string | null;
   ttl: number;

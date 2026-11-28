@@ -1,3 +1,4 @@
+import { recoverLegacy } from "./upgrade/recovery.ts";
 import { backupJourney } from "./archive/journey.ts";
 import { largeLibrary } from "./search/journey.ts";
 import { verifyPortability } from "./opml/journey.ts";
@@ -164,6 +165,19 @@ try {
     await readingPage.close();
     forward(previousWorker.port, false);
     await previousWorker.close();
+  }
+  const history = await subscriptionUpgradePreview("milestone7");
+  const historyPage = await context.newPage();
+  try {
+    forward(history.port, true);
+    await recoverLegacy(historyPage, history);
+    console.log(
+      "Android Milestone 7 private content recovery and offline Original passed",
+    );
+  } finally {
+    await historyPage.close();
+    forward(history.port, false);
+    await history.close();
   }
   const searchPage = await context.newPage();
   try {

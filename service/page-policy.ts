@@ -1,4 +1,5 @@
-import { debianReview } from "../shared/reviewed-article.ts";
+import { publicUrl } from "./network.ts";
+import { substackHost } from "./private-policy.ts";
 export const debianDevelopers =
   "https://bits.debian.org/2026/11/new-developers-2026-11.html";
 export const ccStory =
@@ -11,33 +12,27 @@ export interface PageCandidate {
 }
 export function pageCandidate(
   feed: string,
-  url: string | null,
+  raw: string | null,
   license: string | null,
-  origins: ReadonlySet<string>,
 ): PageCandidate | undefined {
-  if (!url || license === "unreviewed") return;
-  const target = new URL(url);
-  if (target.protocol !== "https:" || target.origin !== new URL(feed).origin)
+  if (!raw || license === "prohibited" || substackHost(feed)) return;
+  let target: URL;
+  try {
+    target = publicUrl(raw);
+  } catch {
     return;
+  }
+  if (substackHost(target.href)) return;
   for (const key of [...target.searchParams.keys()])
     if (key.startsWith("utm_")) target.searchParams.delete(key);
   target.hash = "";
-  if (
-    !license &&
-    feed === debianReview.feed &&
-    target.href === debianDevelopers
-  )
-    return { kind: "debian", url: target.href };
-  if (
-    !license &&
-    feed === "https://creativecommons.org/feed/" &&
-    target.href === ccStory
-  )
-    return { kind: "cc-story", url: ccStory };
-  if (
-    license &&
-    origins.has(target.origin) &&
-    license.startsWith("https://creativecommons.org/")
-  )
-    return { kind: "licensed", url: target.href };
+  return {
+    kind:
+      target.hostname === "bits.debian.org"
+        ? "debian"
+        : target.hostname === "creativecommons.org"
+          ? "cc-story"
+          : "licensed",
+    url: target.href,
+  };
 }

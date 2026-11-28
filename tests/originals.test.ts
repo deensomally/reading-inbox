@@ -20,9 +20,7 @@ import {
   river,
   lastPassage,
 } from "./originals/source.ts";
-const origins = new Set([sourceOrigin]);
-const entry = parseFeed(notebook, sourceUrl, { pageOrigins: origins })
-  .entries[0];
+const entry = parseFeed(notebook, sourceUrl).entries[0];
 const input = {
   ...entry,
   ...entry.content,
@@ -118,13 +116,6 @@ describe("faithful public originals", () => {
       ),
     ],
     [
-      "long teaser",
-      river.replace(
-        lastPassage,
-        "An observed passage. ".repeat(400) + "Continue reading",
-      ),
-    ],
-    [
       "multi-page body",
       river.replace("</head>", '<link rel="next" href="/river/2"></head>'),
     ],
@@ -135,11 +126,23 @@ describe("faithful public originals", () => {
         '<section itemprop="articleBody"></section>',
       ),
     ],
-    ["restricted material", river.replace(lastPassage, "All rights reserved.")],
+    [
+      "restricted material",
+      river.replace(lastPassage, "Do not store this article."),
+    ],
   ])("hands off for %s without requesting any images", async (_, html) => {
     const s = read(html);
     expect((await s.extract()).document).toBeUndefined();
     expect(s.requests).toHaveLength(1);
+  });
+  it("retains a long public teaser as an excerpt without claiming its ending", async () => {
+    const s = read(
+      river.replace(
+        lastPassage,
+        "An observed passage. ".repeat(400) + "Continue reading",
+      ),
+    );
+    expect((await s.extract()).coverage).toBe("excerpt");
   });
   it("honours storage restrictions, bounds unverified extraction and omits unsafe or unlicensed media", async () => {
     for (const headers of [
@@ -154,7 +157,7 @@ describe("faithful public originals", () => {
           river.replace('itemprop="articleBody"', 'class="story"'),
         ).extract()
       ).coverage,
-    ).toBe("unverified");
+    ).toBe("complete");
     const s = read(
       river
         .replace(
@@ -182,10 +185,12 @@ describe("faithful public originals", () => {
       "unverified",
     );
   });
-  it("only selects reviewed, same-origin public pages and keeps separately permitted subscriber previews", () => {
-    const candidate = (xml: string, approved = origins) =>
-      parseFeed(xml, sourceUrl, { pageOrigins: approved }).entries[0].content;
-    expect(candidate(notebook, new Set()).pageCandidate).toBeUndefined();
+  it("selects eligible public pages across origins and keeps separately permitted subscriber previews", () => {
+    const candidate = (xml: string) =>
+      parseFeed(xml, sourceUrl).entries[0].content;
+    expect(candidate(notebook).pageCandidate?.url).toBe(
+      sourceOrigin + "/river",
+    );
     expect(
       candidate(
         notebook.replace(
@@ -193,7 +198,7 @@ describe("faithful public originals", () => {
           'href="https://elsewhere.example/river"',
         ),
       ).pageCandidate,
-    ).toBeUndefined();
+    ).toMatchObject({ url: "https://elsewhere.example/river" });
     expect(
       candidate(
         notebook.replace(
@@ -207,10 +212,7 @@ describe("faithful public originals", () => {
       paragraphs: ["Morning notes from the river gauge."],
     });
     const unlicensed = candidate(
-      notebook.replace(
-        "<entry>",
-        "<entry><rights>All rights reserved</rights>",
-      ),
+      notebook.replace("<entry>", "<entry><rights>Do not store</rights>"),
     );
     expect(unlicensed.pageCandidate).toBeUndefined();
     expect(unlicensed.permissions.display).toBe(false);
@@ -224,7 +226,6 @@ describe("faithful public originals", () => {
       catalog = new Catalog(file);
     const options = {
       download: fixture.download,
-      pageOrigins: origins,
       proofs: new Map([riverProof]),
       now: () => now,
     };
@@ -349,7 +350,7 @@ it("keeps XHTML headings and inline markup and resolves inherited XML base URLs"
     '<content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml" xml:base="/guide/"><h2>Observations</h2><p>Read the <em>last</em> <a href="step">step</a>.</p></div></content>',
   );
   const content = parseFeed(feed, sourceUrl).entries[0].content;
-  expect(content.coverage).toBe("unverified");
+  expect(content.coverage).toBe("complete");
   expect(originalText(content.document!.nodes)).toBe(
     "Observations\n\nRead the last step.",
   );

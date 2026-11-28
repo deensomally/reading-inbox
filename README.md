@@ -4,6 +4,8 @@ A local-first reading PWA for Android and Windows. Phase 1 includes eight fictio
 
 The real RSS owner preview runs the reader and collector on your PC. Pair the browser, add a publication and read permitted articles offline. [Windows and Android walkthrough](docs/RSS_OWNER_PREVIEW.md)
 
+Milestone 7B adds feed-first private originals, public-page fallback, partial word counts and resumable recovery for collected articles. [Windows walkthrough and availability evidence](docs/PRIVATE_CONTENT.md)
+
 Milestone 7 adds bulk and date-based archiving with Undo, and local JSON backup and restore of reading state and explicitly exportable content. [Windows acceptance steps and RSS-only device checklist](docs/ARCHIVE_AND_PORTABLE_DATA.md)
 
 Milestone 6 adds offline search, publication and topic filters, independent status filters, length sorting and publication groups. [Test inbox search on Windows](docs/SEARCH_INBOX.md)

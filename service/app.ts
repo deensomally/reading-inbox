@@ -34,10 +34,7 @@ export function feedApp(
     trustProxy: false,
     ajv: { customOptions: { removeAdditional: false } },
   });
-  catalog.setPagePolicy(
-    options.pageOrigins ?? new Set(),
-    options.proofs ?? new Map(),
-  );
+  catalog.applyPublisherTerms(options.terms ?? new Map());
   const poller = new Poller(catalog, options);
   const access = new BrowserAccess(catalog, options.now);
   const readerPort =
@@ -225,6 +222,31 @@ export function feedApp(
   app.get("/api/opml/export", async (req) => ({
     xml: exportOpml(catalog, req.installation),
   }));
+  app.get("/api/recovery", async (req) =>
+    catalog.recoveryStatus(req.installation),
+  );
+  app.post<{ Body: { saved: string[]; start?: boolean } }>(
+    "/api/recovery",
+    {
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["saved"],
+          properties: {
+            start: { type: "boolean" },
+            saved: {
+              type: "array",
+              maxItems: 150,
+              items: { type: "string", format: "uuid" },
+            },
+          },
+        },
+      },
+    },
+    async (req) =>
+      catalog.requestRecovery(req.installation, req.body.saved, req.body.start),
+  );
   app.get("/api/subscriptions", async (req) => ({
     items: catalog.subscriptions(req.installation),
   }));

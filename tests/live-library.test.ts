@@ -69,15 +69,15 @@ it("matches the independent publisher body, every inline link, the licence and f
     xml.replace("<content", "<rights>Reserved</rights><content"),
   ])
     expect(
-      parseFeed(altered, debianReview.feed).entries[0].content.coverage,
-    ).not.toBe("complete");
+      parseFeed(altered, debianReview.feed).entries[0].content.provenance,
+    ).not.toBe("verified-feed");
   expect(
     parseFeed(xml, debianReview.feed, { storeText: false }).entries[0].content
       .paragraphs,
   ).toEqual([]);
   expect(
     parseFeed(xml, "https://other.example.org/feed").entries[0].content
-      .permissions.copy,
+      .permissions.export,
   ).toBe(false);
 });
 
